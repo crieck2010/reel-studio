@@ -1,0 +1,13 @@
+# reel-studio v0.1.0 — runtime + test dependencies.
+#
+# Peer engines are NOT listed here: they are separate packages installed
+# from their own GitHub repos (documented in README.md):
+#   pip install git+https://github.com/crieck2010/survey-viz.git
+#   pip install git+https://github.com/crieck2010/survey-currents.git
+#   pip install git+https://github.com/crieck2010/survey-animate.git
+
+streamlit>=1.30
+numpy>=1.24
+matplotlib>=3.7
+netCDF4>=1.6        # only needed when actually fetching GLSEA NetCDF (lazy import in survey-currents)
+pytest>=7.0         # test suite
