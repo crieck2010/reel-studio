@@ -74,12 +74,33 @@ four lakes' bboxes already fit the grid.
 ## What "fetchable" means today
 
 * **Regions:** the 5 Great Lakes (`lake-superior`, `lake-michigan`,
-  `lake-huron`, `lake-erie`, `lake-ontario`) — `viz.is_fetchable`.
-* **Variables:** `sst` only.
+  `lake-huron`, `lake-erie`, `lake-ontario`) for SST via GLSEA
+  (`viz.is_fetchable`); any region for SST via OISST/MUR (global grids);
+  **any region** for the ERA5 atmosphere variables (global 0.25° grid).
+* **Variables:** `sst` (GLSEA/OISST/MUR), `wind` / `msl` / `t2m` / `tp`
+  (ERA5 via the CDS API — needs `survey-currents>=0.4.0`, `cdsapi`,
+  `netCDF4`, and a free CDS account).
 * Anything else → `plan_fetch` returns `fetchable=False` with a message
   naming the missing adapter; `run_pipeline` raises
   `UnfetchableRegionError` / `UnsupportedVariableError`; the app shows
   the message instead of crashing.
+
+## ERA5 contract (survey-viz 0.3.0 / survey-currents 0.4.0)
+
+* `wire_peers` exposes `fetch_era5` (None when survey-currents < 0.4.0 —
+  the pipeline then raises the honest upgrade message).
+* `run_pipeline` calls
+  `fetch_era5([spec.variable] + list(spec.overlays), bbox, start, end,
+  stride_hours=...)` — one CDS call carries the base variable **and**
+  any contour overlays (e.g. `["wind", "msl"]` for the storm
+  combination). `stride_hours=24` by default (daily 12:00 UTC).
+* The field is adapted with `_field_to_dict`, which carries
+  `overlay_grids` through (dropping them would silently lose a requested
+  overlay); `render_viz` draws the contours from survey-viz 0.3.0.
+* ERA5 renders with `series=None` (no lake-average equivalent —
+  placeholder chart panel, same as global SST).
+* Provenance: `RunResult.source == "era5"`, field provenance under
+  `provenance["fetch"]["era5"]` (SST adapters keep `"sst"`).
 
 ## Adding a new adapter (future)
 

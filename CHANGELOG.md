@@ -2,6 +2,20 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+- ERA5 atmosphere flow-through (needs survey-viz 0.3.0 +
+  survey-currents 0.4.0): `plan_fetch` routes source `"era5"` as
+  fetchable in any region for `wind`/`msl`/`t2m`/`tp`;
+  `run_pipeline` fetches `[variable] + overlays` in one CDS call
+  (`stride_hours=24` default), carries `overlay_grids` into
+  `render_viz` (isobar contours for the storm combination), renders
+  with `series=None`, and records `source="era5"` with field
+  provenance under `provenance["fetch"]["era5"]`. `wire_peers`
+  exposes `fetch_era5` (optional — honest upgrade message on
+  survey-currents < 0.4.0). Documented in `docs/INTEROP.md`.
+
 ## [0.1.0] - 2026-09-26
 
 First release: plain-English description → finished vertical reel MP4, 100% local.

@@ -28,19 +28,33 @@ FETCHABLE_REGION_TO_LAKE = {
     "lake-ontario": "ontario",
 }
 
-#: The only variable with a fetch adapter today (SST, via GLSEA/OISST/MUR).
-SUPPORTED_VARIABLES = ("sst",)
+#: The only SST variable (via GLSEA/OISST/MUR).
+SST_VARIABLE = "sst"
+
+#: The ERA5 atmosphere variables (Copernicus ERA5 reanalysis via
+#: ``currents.era5.fetch_era5``, survey-currents >= 0.4.0). Fetchable in
+#: any region — the 0.25° grid is global.
+ERA5_VARIABLES = ("wind", "msl", "t2m", "tp")
+
+#: Variables with a fetch adapter: SST + the ERA5 atmosphere set.
+SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES
 
 #: Source names the pipeline knows how to fetch (see viz.sources).
 SOURCE_LABELS = {
     "glsea": "NOAA GLSEA",
     "oisst": "NOAA OISST v2.1",
     "mur": "NASA JPL MUR v4.1",
+    "era5": "Copernicus ERA5 (CDS)",
 }
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
 #: keeps multi-year windows to a manageable frame count.
 DEFAULT_STRIDE_DAYS = 30
+
+#: ERA5 hourly reanalysis, sampled this often for the reel. Daily 12:00 UTC
+#: keeps multi-month windows to a manageable frame count (the viz spec's
+#: own cadence then buckets timesteps into frames).
+DEFAULT_STRIDE_HOURS = 24
 
 
 class UnfetchableRegionError(ValueError):
@@ -62,7 +76,8 @@ class FetchPlan:
     variable: str = ""
     #: "ok" | "no_adapter" (region not fetchable) | "bad_variable"
     kind: str = "ok"
-    #: which adapter the fetch uses: "glsea" | "oisst" | "mur" ("ok" plans only)
+    #: which adapter the fetch uses:
+    #: "glsea" | "oisst" | "mur" | "era5" ("ok" plans only)
     source: str = ""
 
 
@@ -90,7 +105,8 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
 
     # Source-aware routing (survey-viz >= 0.2.0): an explicitly pinned
     # source, or the regional default (Great-Lakes SST -> glsea, other
-    # SST -> oisst), decides the adapter -- not the region key alone.
+    # SST -> oisst, wind/msl/t2m/tp -> era5), decides the adapter -- not
+    # the region key alone.
     source = ""
     if resolve_source is not None:
         try:
@@ -123,6 +139,33 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             region_key=region_key,
             variable=variable,
             source=source,
+        )
+
+    # ERA5 atmosphere (survey-viz >= 0.3.0): fetchable in ANY region — the
+    # reanalysis grid is global, so no region-key check applies.
+    if source == "era5":
+        if variable not in ERA5_VARIABLES:
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Source 'era5' only serves the atmosphere variables "
+                    f"{list(ERA5_VARIABLES)}; got variable '{variable}'. "
+                    "(SST goes through glsea/oisst/mur.)"
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
+        return FetchPlan(
+            fetchable=True,
+            reason=(
+                f"Region '{region_key}' is fetchable via "
+                f"{SOURCE_LABELS['era5']} (variable '{variable}', "
+                "source 'era5')."
+            ),
+            region_key=region_key,
+            variable=variable,
+            source="era5",
         )
 
     if not is_fetchable(region_key):
@@ -200,7 +243,7 @@ class RunResult:
     n_frames: int
     spec: Dict[str, Any]
     lake: str
-    #: which adapter fetched the SST: "glsea" | "oisst" | "mur"
+    #: which adapter fetched the data: "glsea" | "oisst" | "mur" | "era5"
     source: str = ""
     provenance: Dict[str, Any] = field(default_factory=dict)
 
@@ -263,20 +306,39 @@ def _time_to_date_str(value: Any) -> str:
 
 
 def _field_to_dict(field: Any) -> Dict[str, Any]:
-    """Adapt a GlseaField-shaped object to survey-viz's documented dict form.
+    """Adapt a field-shaped object to survey-viz's documented dict form.
 
     viz's ``render_viz`` documents plain dicts with ``times``/``lats``/
     ``lons``/``values`` keys; we use that form (rather than passing the
     field through) so the ISO-datetime ``times`` get normalized by
-    :func:`_time_to_date_str` first.
+    :func:`_time_to_date_str` first. ``overlay_grids`` (ERA5 contour
+    overlays, e.g. isobars) are carried through under the same key —
+    dropping them would silently lose a requested overlay.
     """
-    if isinstance(field, dict):
+    def _overlay_dict(src: Any) -> Dict[str, Any]:
+        ov = None
+        if isinstance(src, dict):
+            ov = src.get("overlay_grids")
+        else:
+            ov = getattr(src, "overlay_grids", None)
+        if not ov:
+            return {}
         return {
+            str(name): np.ma.filled(np.ma.asarray(arr, dtype=float), np.nan)
+            for name, arr in dict(ov).items()
+        }
+
+    if isinstance(field, dict):
+        out = {
             "times": [_time_to_date_str(t) for t in field["times"]],
             "lats": field["lats"],
             "lons": field["lons"],
             "values": field["values"],
         }
+        overlays = _overlay_dict(field)
+        if overlays:
+            out["overlay_grids"] = overlays
+        return out
     values = None
     for attr in ("values", "data", "sst", "grids"):
         arr = getattr(field, attr, None)
@@ -289,12 +351,16 @@ def _field_to_dict(field: Any) -> Dict[str, Any]:
         raise TypeError(
             "field has no 3D grid data: expected a (ntime, nlat, nlon) "
             "attribute among ('values', 'data', 'sst', 'grids')")
-    return {
+    out = {
         "times": [_time_to_date_str(t) for t in field.times],
         "lats": np.asarray(field.lats, dtype=float),
         "lons": np.asarray(field.lons, dtype=float),
         "values": np.ma.filled(values, np.nan),
     }
+    overlays = _overlay_dict(field)
+    if overlays:
+        out["overlay_grids"] = overlays
+    return out
 
 
 def _series_to_dict(series: Any) -> Optional[Dict[str, Any]]:
@@ -322,6 +388,7 @@ def run_pipeline(
     out_dir: str,
     progress: Optional[Callable[[float, str], None]] = None,
     stride_days: int = DEFAULT_STRIDE_DAYS,
+    stride_hours: int = DEFAULT_STRIDE_HOURS,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -330,10 +397,13 @@ def run_pipeline(
         peers: namespace from :func:`studio.peers.wire_peers` (or test doubles)
             with ``is_fetchable``, ``resolve_source`` (optional),
             ``fetch_sst``, ``fetch_averages``, ``fetch_oisst``,
-            ``fetch_mur`` (optional), ``render_viz``, ``render_video``.
+            ``fetch_mur``, ``fetch_era5`` (optional), ``render_viz``,
+            ``render_video``.
         out_dir: working directory for frames + the MP4 (created if needed).
         progress: optional ``(fraction, message)`` callback.
         stride_days: time-axis stride for the SST fetch calls.
+        stride_hours: time-axis stride for the ERA5 fetch call (hourly
+            reanalysis; 24 = daily 12:00 UTC).
 
     Raises:
         UnfetchableRegionError / UnsupportedVariableError: honest,
@@ -359,6 +429,7 @@ def run_pipeline(
 
     # -- 1. fetch -----------------------------------------------------------
     clamp_notes: List[str] = []
+    fetch_key = "sst"
     if source == "glsea":
         report(0.05, "Fetching GLSEA sea-surface-temperature grid…")
         fetch_bbox = _clamp_bbox(
@@ -381,6 +452,37 @@ def run_pipeline(
             raise RuntimeError(
                 f"Lake-average fetch failed ({type(exc).__name__}: {exc})."
             ) from exc
+    elif source == "era5":
+        # ERA5 atmosphere: fetch the base variable plus any contour
+        # overlays (e.g. msl isobars for the storm combination) in one
+        # call, on the spec bbox directly — the 0.25° grid is global,
+        # nothing to clamp. series=None: there is no lake-average
+        # equivalent; render_viz shows a placeholder chart panel.
+        variables = [str(getattr(spec, "variable", ""))] + [
+            str(o) for o in (getattr(spec, "overlays", None) or ())]
+        label = SOURCE_LABELS["era5"]
+        report(0.05, f"Fetching {label} {', '.join(variables)} grid…")
+        fetch_fn = getattr(peers, "fetch_era5", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                "Source 'era5' needs survey-currents>=0.4.0 with the ERA5 "
+                "adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        try:
+            field = fetch_fn(
+                variables, tuple(spec.bbox), spec.start, spec.end,
+                stride_hours=stride_hours)
+        except Exception as exc:
+            raise RuntimeError(
+                f"ERA5 fetch failed ({type(exc).__name__}: {exc}). "
+                "Check the network connection, that cdsapi and netCDF4 are "
+                "installed (pip install cdsapi netCDF4), and that a free "
+                "Copernicus CDS account is configured (~/.cdsapirc or "
+                "CDSAPI_URL/CDSAPI_KEY)."
+            ) from exc
+        series = None
+        fetch_key = "era5"
     else:
         # Global SST (OISST/MUR): fetch on the spec bbox directly — the
         # global grids have no lake bounds to clamp to — and render with
@@ -436,7 +538,9 @@ def run_pipeline(
         "lake": lake,
         "source": source,
         "fetch": {
-            "sst": dict(getattr(field, "provenance", {}) or {}),
+            # "sst" for the SST adapters, "era5" for the atmosphere adapter
+            # (the field provenance carries the source-specific payload).
+            fetch_key: dict(getattr(field, "provenance", {}) or {}),
             "averages": dict(getattr(series, "provenance", {}) or {}),
             "bbox_clamp_notes": clamp_notes,
         },

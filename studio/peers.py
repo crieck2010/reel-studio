@@ -26,7 +26,7 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
     "survey-currents": {
         "module": "currents",
         "pip": "pip install git+https://github.com/crieck2010/survey-currents.git",
-        "needed_for": "SST fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages) plus global OISST/MUR (fetch_oisst, fetch_mur)",
+        "needed_for": "fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages), global OISST/MUR (fetch_oisst, fetch_mur), ERA5 atmosphere (fetch_era5)",
     },
     "survey-animate": {
         "module": "animate",
@@ -101,9 +101,10 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
 
     glsea = importlib.import_module("currents.glsea")
 
-    # Source routing (survey-viz >= 0.2.0) and the global-SST adapters
-    # (survey-currents >= 0.3.0) are optional: older peers simply lack
-    # them, and the pipeline falls back to the legacy GLSEA-only path.
+    # Source routing (survey-viz >= 0.2.0), the global-SST adapters
+    # (survey-currents >= 0.3.0), and the ERA5 atmosphere adapter
+    # (survey-currents >= 0.4.0) are optional: older peers simply lack
+    # them, and the pipeline falls back to the legacy paths.
     try:
         viz_sources = importlib.import_module("viz.sources")
     except ImportError:
@@ -112,6 +113,10 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         sst_global = importlib.import_module("currents.sst_global")
     except ImportError:
         sst_global = None
+    try:
+        era5 = importlib.import_module("currents.era5")
+    except ImportError:
+        era5 = None
 
     return types.SimpleNamespace(
         parse_description=viz.parse_description,
@@ -124,6 +129,7 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         fetch_averages=glsea.fetch_glsea_lake_averages,
         fetch_oisst=(sst_global.fetch_oisst if sst_global else None),
         fetch_mur=(sst_global.fetch_mur if sst_global else None),
+        fetch_era5=(era5.fetch_era5 if era5 else None),
         # GLSEA grid bounds (lon_min, lat_min, lon_max, lat_max); the pipeline
         # clamps spec bboxes into this window before fetching, because the
         # lake-superior gazetteer bbox starts slightly west of the grid floor.
