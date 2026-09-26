@@ -21,12 +21,12 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
     "survey-viz": {
         "module": "viz",
         "pip": "pip install git+https://github.com/crieck2010/survey-viz.git",
-        "needed_for": "description parsing (parse_description/VizSpec) and frame rendering (render_viz)",
+        "needed_for": "description parsing (parse_description/VizSpec), frame rendering (render_viz), and source routing (viz.sources)",
     },
     "survey-currents": {
         "module": "currents",
         "pip": "pip install git+https://github.com/crieck2010/survey-currents.git",
-        "needed_for": "Great-Lakes SST fetching (fetch_glsea_sst, fetch_glsea_lake_averages)",
+        "needed_for": "SST fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages) plus global OISST/MUR (fetch_oisst, fetch_mur)",
     },
     "survey-animate": {
         "module": "animate",
@@ -101,14 +101,29 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
 
     glsea = importlib.import_module("currents.glsea")
 
+    # Source routing (survey-viz >= 0.2.0) and the global-SST adapters
+    # (survey-currents >= 0.3.0) are optional: older peers simply lack
+    # them, and the pipeline falls back to the legacy GLSEA-only path.
+    try:
+        viz_sources = importlib.import_module("viz.sources")
+    except ImportError:
+        viz_sources = None
+    try:
+        sst_global = importlib.import_module("currents.sst_global")
+    except ImportError:
+        sst_global = None
+
     return types.SimpleNamespace(
         parse_description=viz.parse_description,
         parse_error=viz.UnparseableDescription,
         VizSpec=viz.VizSpec,
         is_fetchable=viz.is_fetchable,
         get_region=viz.get_region,
+        resolve_source=(viz_sources.resolve_source if viz_sources else None),
         fetch_sst=glsea.fetch_glsea_sst,
         fetch_averages=glsea.fetch_glsea_lake_averages,
+        fetch_oisst=(sst_global.fetch_oisst if sst_global else None),
+        fetch_mur=(sst_global.fetch_mur if sst_global else None),
         # GLSEA grid bounds (lon_min, lat_min, lon_max, lat_max); the pipeline
         # clamps spec bboxes into this window before fetching, because the
         # lake-superior gazetteer bbox starts slightly west of the grid floor.

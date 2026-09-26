@@ -18,8 +18,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 
 #: survey-viz region_key -> survey-currents lake name for
-#: ``fetch_glsea_lake_averages``. Only the 5 Great Lakes are fetchable
-#: today (see ``viz.gazetteer.is_fetchable``).
+#: ``fetch_glsea_lake_averages``. Lake-average series only exist for the
+#: 5 Great Lakes; global SST (OISST/MUR) renders with series=None.
 FETCHABLE_REGION_TO_LAKE = {
     "lake-superior": "superior",
     "lake-michigan": "michigan",
@@ -28,8 +28,15 @@ FETCHABLE_REGION_TO_LAKE = {
     "lake-ontario": "ontario",
 }
 
-#: The only variable with a fetch adapter today (NOAA GLSEA SST).
+#: The only variable with a fetch adapter today (SST, via GLSEA/OISST/MUR).
 SUPPORTED_VARIABLES = ("sst",)
+
+#: Source names the pipeline knows how to fetch (see viz.sources).
+SOURCE_LABELS = {
+    "glsea": "NOAA GLSEA",
+    "oisst": "NOAA OISST v2.1",
+    "mur": "NASA JPL MUR v4.1",
+}
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
 #: keeps multi-year windows to a manageable frame count.
@@ -55,6 +62,8 @@ class FetchPlan:
     variable: str = ""
     #: "ok" | "no_adapter" (region not fetchable) | "bad_variable"
     kind: str = "ok"
+    #: which adapter the fetch uses: "glsea" | "oisst" | "mur" ("ok" plans only)
+    source: str = ""
 
 
 def region_to_lake(region_key: str) -> Optional[str]:
@@ -62,12 +71,16 @@ def region_to_lake(region_key: str) -> Optional[str]:
     return FETCHABLE_REGION_TO_LAKE.get(region_key)
 
 
-def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool]) -> FetchPlan:
+def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
+             resolve_source: Optional[Callable[[Any], str]] = None) -> FetchPlan:
     """Decide whether ``spec`` can be fetched, without touching the network.
 
     ``spec`` is any object with ``region_key`` and ``variable`` attributes
     (a real ``VizSpec`` or a test double); ``is_fetchable`` is the
-    ``viz.gazetteer.is_fetchable`` callable (or a test double).
+    ``viz.gazetteer.is_fetchable`` callable (or a test double);
+    ``resolve_source`` is the optional ``viz.sources.resolve_source``
+    callable (absent on survey-viz < 0.2.0, in which case the legacy
+    GLSEA-only path applies).
 
     Returns a :class:`FetchPlan`. Callers turn ``fetchable=False`` into a
     clear user-facing message instead of a crash.
@@ -75,11 +88,48 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool]) -> FetchPlan:
     region_key = str(getattr(spec, "region_key", ""))
     variable = str(getattr(spec, "variable", ""))
 
+    # Source-aware routing (survey-viz >= 0.2.0): an explicitly pinned
+    # source, or the regional default (Great-Lakes SST -> glsea, other
+    # SST -> oisst), decides the adapter -- not the region key alone.
+    source = ""
+    if resolve_source is not None:
+        try:
+            source = str(resolve_source(spec) or "").strip().lower()
+        except ValueError:
+            source = ""
+    if not source:
+        source = str(getattr(spec, "source", "") or "").strip().lower()
+    if source in ("oisst", "mur"):
+        if variable not in SUPPORTED_VARIABLES:
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Variable '{variable}' has no fetch adapter -- only 'sst' "
+                    "(surface water temperature) is supported today. The "
+                    "description parsed fine; other variables need a new "
+                    "data adapter (see docs/INTEROP.md)."
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
+        label = SOURCE_LABELS[source]
+        return FetchPlan(
+            fetchable=True,
+            reason=(
+                f"Region '{region_key}' is fetchable via {label} "
+                f"(variable '{variable}', source '{source}')."
+            ),
+            region_key=region_key,
+            variable=variable,
+            source=source,
+        )
+
     if not is_fetchable(region_key):
         return FetchPlan(
             fetchable=False,
             reason=(
-                f"Region '{region_key}' has no fetch adapter yet — only the 5 "
+                f"Region '{region_key}' has no fetch adapter yet -- only the 5 "
                 "Great Lakes (Superior, Michigan, Huron, Erie, Ontario) can "
                 "be fetched today, via NOAA GLSEA. The description parsed "
                 "fine; fetching other regions needs a new data adapter "
@@ -93,7 +143,7 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool]) -> FetchPlan:
         return FetchPlan(
             fetchable=False,
             reason=(
-                f"Variable '{variable}' has no fetch adapter — only 'sst' "
+                f"Variable '{variable}' has no fetch adapter -- only 'sst' "
                 "(surface water temperature) is supported today, via NOAA "
                 "GLSEA. The description parsed fine; other variables need a "
                 "new data adapter (see docs/INTEROP.md)."
@@ -111,6 +161,7 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool]) -> FetchPlan:
         lake=region_to_lake(region_key),
         region_key=region_key,
         variable=variable,
+        source="glsea",
     )
 
 
@@ -149,6 +200,8 @@ class RunResult:
     n_frames: int
     spec: Dict[str, Any]
     lake: str
+    #: which adapter fetched the SST: "glsea" | "oisst" | "mur"
+    source: str = ""
     provenance: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -244,13 +297,17 @@ def _field_to_dict(field: Any) -> Dict[str, Any]:
     }
 
 
-def _series_to_dict(series: Any) -> Dict[str, Any]:
+def _series_to_dict(series: Any) -> Optional[Dict[str, Any]]:
     """Adapt a survey-currents LakeSeries to survey-viz's duck-typed series.
 
     survey-viz's ``_normalize_series`` accepts a dict with ``dates``/``values``
     keys; LakeSeries exposes ``.dates``/``.temps``, so we adapt explicitly
-    instead of relying on attribute coincidence.
+    instead of relying on attribute coincidence. ``None`` (global SST:
+    no lake-average equivalent) passes through, and render_viz draws a
+    placeholder chart panel.
     """
+    if series is None:
+        return None
     if isinstance(series, dict):
         return series
     return {
@@ -271,11 +328,12 @@ def run_pipeline(
     Args:
         spec: a ``VizSpec`` (from ``parse_with_fallback``).
         peers: namespace from :func:`studio.peers.wire_peers` (or test doubles)
-            with ``is_fetchable``, ``fetch_sst``, ``fetch_averages``,
-            ``render_viz``, ``render_video``.
+            with ``is_fetchable``, ``resolve_source`` (optional),
+            ``fetch_sst``, ``fetch_averages``, ``fetch_oisst``,
+            ``fetch_mur`` (optional), ``render_viz``, ``render_video``.
         out_dir: working directory for frames + the MP4 (created if needed).
         progress: optional ``(fraction, message)`` callback.
-        stride_days: GLSEA time-axis stride for ``fetch_glsea_sst``.
+        stride_days: time-axis stride for the SST fetch calls.
 
     Raises:
         UnfetchableRegionError / UnsupportedVariableError: honest,
@@ -286,40 +344,69 @@ def run_pipeline(
         if progress is not None:
             progress(frac, message)
 
-    plan = plan_fetch(spec, peers.is_fetchable)
+    plan = plan_fetch(spec, peers.is_fetchable,
+                      getattr(peers, "resolve_source", None))
     if not plan.fetchable:
         if plan.kind == "bad_variable":
             raise UnsupportedVariableError(plan.reason)
         raise UnfetchableRegionError(plan.reason)
     lake = plan.lake or ""
+    source = plan.source or "glsea"
 
     os.makedirs(out_dir, exist_ok=True)
     frames_dir = os.path.join(out_dir, "frames")
     os.makedirs(frames_dir, exist_ok=True)
 
     # -- 1. fetch -----------------------------------------------------------
-    report(0.05, "Fetching GLSEA sea-surface-temperature grid…")
     clamp_notes: List[str] = []
-    fetch_bbox = _clamp_bbox(
-        spec.bbox, getattr(peers, "glsea_bounds",
-                           (-180.0, -90.0, 180.0, 90.0)), clamp_notes)
-    try:
-        field = peers.fetch_sst(
-            fetch_bbox, spec.start, spec.end, stride_days=stride_days)
-    except Exception as exc:
-        raise RuntimeError(
-            f"SST fetch failed ({type(exc).__name__}: {exc}). "
-            "Check the network connection and that netCDF4 is installed "
-            "(pip install netCDF4)."
-        ) from exc
+    if source == "glsea":
+        report(0.05, "Fetching GLSEA sea-surface-temperature grid…")
+        fetch_bbox = _clamp_bbox(
+            spec.bbox, getattr(peers, "glsea_bounds",
+                               (-180.0, -90.0, 180.0, 90.0)), clamp_notes)
+        try:
+            field = peers.fetch_sst(
+                fetch_bbox, spec.start, spec.end, stride_days=stride_days)
+        except Exception as exc:
+            raise RuntimeError(
+                f"SST fetch failed ({type(exc).__name__}: {exc}). "
+                "Check the network connection and that netCDF4 is installed "
+                "(pip install netCDF4)."
+            ) from exc
 
-    report(0.35, f"Fetching {lake} lake-average temperature series…")
-    try:
-        series = peers.fetch_averages(lake, spec.start, spec.end)
-    except Exception as exc:
-        raise RuntimeError(
-            f"Lake-average fetch failed ({type(exc).__name__}: {exc})."
-        ) from exc
+        report(0.35, f"Fetching {lake} lake-average temperature series…")
+        try:
+            series = peers.fetch_averages(lake, spec.start, spec.end)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Lake-average fetch failed ({type(exc).__name__}: {exc})."
+            ) from exc
+    else:
+        # Global SST (OISST/MUR): fetch on the spec bbox directly — the
+        # global grids have no lake bounds to clamp to — and render with
+        # series=None (there is no lake-average equivalent; render_viz
+        # shows a placeholder chart panel).
+        label = SOURCE_LABELS[source]
+        report(0.05, f"Fetching {label} sea-surface-temperature grid…")
+        fetch_fn = getattr(peers, f"fetch_{source}", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                f"Source '{source}' needs survey-currents>=0.3.0 with the "
+                f"global-SST adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        try:
+            field = fetch_fn(
+                tuple(spec.bbox), spec.start, spec.end,
+                stride_days=stride_days)
+        except Exception as exc:
+            raise RuntimeError(
+                f"SST fetch failed ({type(exc).__name__}: {exc}). "
+                "Check the network connection, that netCDF4 is installed "
+                "(pip install netCDF4), and (for MUR) that Earthdata "
+                "credentials are configured."
+            ) from exc
+        series = None
 
     # -- 2. render frames ----------------------------------------------------
     # render_viz is duck-typed: the field is adapted to its documented dict
@@ -347,6 +434,7 @@ def run_pipeline(
     provenance = {
         "spec": spec.to_dict() if hasattr(spec, "to_dict") else dict(spec),
         "lake": lake,
+        "source": source,
         "fetch": {
             "sst": dict(getattr(field, "provenance", {}) or {}),
             "averages": dict(getattr(series, "provenance", {}) or {}),
@@ -374,5 +462,6 @@ def run_pipeline(
         n_frames=len(frames),
         spec=provenance["spec"],
         lake=lake,
+        source=source,
         provenance=provenance,
     )
