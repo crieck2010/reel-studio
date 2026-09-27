@@ -631,7 +631,10 @@ def run_pipeline(
             ``render_video``.
         out_dir: working directory for frames + the MP4 (created if needed).
         progress: optional ``(fraction, message)`` callback.
-        stride_days: time-axis stride for the SST fetch calls.
+        stride_days: time-axis stride for the daily fetch calls (SST,
+            global currents, NSIDC sea ice); 30 samples roughly monthly
+            frames from a multi-year window. FIRMS is daily by construction
+            and ignores it.
         stride_hours: time-axis stride for the ERA5 fetch call (hourly
             reanalysis; 24 = daily 12:00 UTC).
 
