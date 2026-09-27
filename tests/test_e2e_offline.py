@@ -29,11 +29,16 @@ from studio import pipeline  # noqa: E402
 
 
 def _wired(field, series):
+    def _render_viz(spec, field, series, out_dir):
+        # Offline by contract: the GEBCO/Natural Earth underlay would
+        # otherwise hit the network on first use.
+        return viz.render_viz(spec, field, series, out_dir=out_dir,
+                              underlay=False)
     return types.SimpleNamespace(
         is_fetchable=viz.is_fetchable,
         fetch_sst=lambda bbox, start, end, stride_days=30: field,
         fetch_averages=lambda lake, start, end: series,
-        render_viz=viz.render_viz,
+        render_viz=_render_viz,
         render_video=animate.render_video,
         glsea_bounds=(-92.4199507342304, 38.8749871947297,
                       -75.8816402880531, 50.6059751976539),
