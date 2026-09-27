@@ -15,6 +15,18 @@ All notable changes to reel-studio. Format follows [Keep a Changelog](https://ke
   provenance under `provenance["fetch"]["era5"]`. `wire_peers`
   exposes `fetch_era5` (optional — honest upgrade message on
   survey-currents < 0.4.0). Documented in `docs/INTEROP.md`.
+- GPM IMERG precipitation flow-through (needs survey-viz 0.7.0 +
+  survey-currents 0.8.0): `plan_fetch` routes source `"imerg"` as
+  fetchable in any region for variable `tp` only (other variables are
+  `bad_variable`); `run_pipeline` calls
+  `fetch_imerg(bbox, start, end, accumulate="daily", run="late",
+  stride_days=...)` — relying on the adapter defaults — renders with
+  `series=None`, and records field provenance under
+  `provenance["fetch"]["imerg"]`. `wire_peers` exposes `fetch_imerg`
+  lazily (honest upgrade message naming `survey-currents>=0.8.0` on
+  older peers). `_field_to_dict` adapts the `RainField` through the
+  generic 3D-`values` path (mm/day totals, NaN for missing) — zero
+  renderer changes. Documented in `docs/INTEROP.md`.
 
 ## [0.1.0] - 2026-09-26
 

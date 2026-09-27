@@ -156,6 +156,31 @@ four lakes' bboxes already fit the grid.
   generic 3D-`values` path — percent concentration with NaN for
   land/missing — zero renderer changes.
 
+## IMERG precipitation contract (survey-viz 0.7.0 / survey-currents 0.8.0)
+
+* `wire_peers` exposes `fetch_imerg` lazily (None when
+  survey-currents < 0.8.0 — the pipeline then raises the honest upgrade
+  message naming `survey-currents>=0.8.0`).
+* `run_pipeline` calls `fetch_imerg(bbox, start, end,
+  accumulate="daily", run="late", stride_days=DEFAULT_STRIDE_DAYS)` on
+  the spec bbox directly (the 0.1° IMERG grid is global — nothing to
+  clamp) with `series=None` (no lake-average equivalent; the chart
+  panel shows a placeholder). Provenance key is `fetch["imerg"]`
+  (per-file URLs + SHA-256 + run + accumulation mode +
+  per-day `{"expected": 48, "retrieved": n}` coverage). The archive
+  needs a free Earthdata Login, so the fetch failure message names
+  `EARTHDATA_USERNAME`/`EARTHDATA_PASSWORD` (or `~/.netrc`) and the
+  `survey-currents[imerg]` (h5py) extra.
+* `plan_fetch` routes `imerg` (the source comes from
+  `viz.sources.resolve_source` on survey-viz >= 0.7.0: any region,
+  variable `tp` → `imerg` for explicit requests and recent / observed /
+  event wording; long-record wording pins `era5` instead — see
+  survey-viz docs/PARSER.md §6a). An `imerg` pin on any other variable
+  is refused as `bad_variable`.
+* `_field_to_dict` adapts a survey-currents `RainField` through the
+  generic 3D-`values` path — mm/day daily totals (or mm/hr rates for
+  `accumulate="native"`) with NaN for missing — zero renderer changes.
+
 ## ERA5 contract (survey-viz 0.3.0 / survey-currents 0.4.0)
 
 * `wire_peers` exposes `fetch_era5` (None when survey-currents < 0.4.0 —

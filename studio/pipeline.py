@@ -78,6 +78,7 @@ SOURCE_LABELS = {
     "cmems-currents": "CMEMS Global Ocean Physics (daily)",
     "firms": "NASA FIRMS",
     "nsidc": "NSIDC Sea Ice Index (G02135 v4.0)",
+    "imerg": "NASA GPM IMERG V07",
 }
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
@@ -111,7 +112,7 @@ class FetchPlan:
     kind: str = "ok"
     #: which adapter the fetch uses:
     #: "glsea" | "oisst" | "mur" | "era5" | "oscar" | "cmems-currents" |
-    #: "firms" | "nsidc" ("ok" plans only)
+    #: "firms" | "nsidc" | "imerg" ("ok" plans only)
     source: str = ""
 
 
@@ -358,6 +359,35 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             source="nsidc",
         )
 
+    # GPM IMERG precipitation (survey-viz >= 0.7.0, survey-currents >=
+    # 0.8.0): fetchable in ANY region — the 0.1° IMERG grid is global,
+    # so no region-key check applies. Only the "tp" variable: an
+    # explicit imerg pin on another variable is refused as a bad
+    # variable (ERA5 keeps serving tp for long-record requests).
+    if source == "imerg":
+        if variable != "tp":
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Source 'imerg' only serves the 'tp' (precipitation) "
+                    f"variable; got variable '{variable}'."
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
+        return FetchPlan(
+            fetchable=True,
+            reason=(
+                f"Region '{region_key}' is fetchable via "
+                f"{SOURCE_LABELS['imerg']} (variable '{variable}', "
+                "source 'imerg')."
+            ),
+            region_key=region_key,
+            variable=variable,
+            source="imerg",
+        )
+
     if not is_fetchable(region_key):
         return FetchPlan(
             fetchable=False,
@@ -520,6 +550,11 @@ def _field_to_dict(field: Any) -> Dict[str, Any]:
     (NSIDC G02135 sea ice, survey-currents >= 0.7.0) needs no
     adaptation: its 3D ``values`` (percent concentration, NaN for
     land/missing) flow through the generic attribute path unchanged.
+    A survey-currents ``RainField`` (GPM IMERG precipitation,
+    survey-currents >= 0.8.0) needs no adaptation either: its 3D
+    ``values`` (mm/day daily totals, or mm/hr rates for
+    ``accumulate="native"``; NaN for missing) flow through the generic
+    attribute path unchanged.
     """
 
     # FireField (NASA FIRMS active fires): bin detections into daily
@@ -802,6 +837,38 @@ def run_pipeline(
             ) from exc
         series = None
         fetch_key = "nsidc"
+    elif source == "imerg":
+        # NASA GPM IMERG V07 half-hourly precipitation:
+        # fetch_imerg(bbox, start, end, accumulate="daily", run="late",
+        # stride_days=...) on the spec bbox directly — the 0.1° grid is
+        # global, nothing to clamp. series=None: there is no
+        # lake-average equivalent; render_viz shows a placeholder chart
+        # panel. _field_to_dict adapts the RainField via its 3D
+        # ``values`` (mm/day daily totals, NaN for missing).
+        label = SOURCE_LABELS[source]
+        report(0.05, f"Fetching {label} precipitation grid…")
+        fetch_fn = getattr(peers, "fetch_imerg", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                "Source 'imerg' needs survey-currents>=0.8.0 with the "
+                "GPM IMERG adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        try:
+            field = fetch_fn(
+                tuple(spec.bbox), spec.start, spec.end,
+                accumulate="daily", run="late",
+                stride_days=stride_days)
+        except Exception as exc:
+            raise RuntimeError(
+                f"IMERG fetch failed ({type(exc).__name__}: {exc}). "
+                "Check the network connection, that h5py is installed "
+                "(pip install \"survey-currents[imerg]\"), and that a free "
+                "Earthdata Login is configured (EARTHDATA_USERNAME / "
+                "EARTHDATA_PASSWORD or ~/.netrc)."
+            ) from exc
+        series = None
+        fetch_key = "imerg"
     else:
         # Global SST (OISST/MUR): fetch on the spec bbox directly — the
         # global grids have no lake bounds to clamp to — and render with

@@ -110,6 +110,13 @@ streamlit run app.py   # app launches; Engine-status shows all three peers
   gazetteer bbox starts slightly west of the grid floor, so the fetch
   bbox is clamped (recorded in provenance).
 * Real fetches need network access to NOAA ERDDAP and `netCDF4`.
+* Precipitation (unreleased): variable `tp` with source `imerg` (NASA
+  GPM IMERG V07 — needs survey-currents 0.8.0, the
+  `survey-currents[imerg]`/h5py extra, and a free Earthdata Login)
+  fetches half-hourly global precipitation accumulated to daily mm/day
+  totals (`run="late"` default); survey-viz 0.7.0 routes explicit
+  requests and recent/observed/event wording here, long-record wording
+  to ERA5.
 * `streamlit run` needs the peers installed; `python -m studio.demo` and
   the test suite degrade gracefully without them.
 

@@ -26,7 +26,7 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
     "survey-currents": {
         "module": "currents",
         "pip": "pip install git+https://github.com/crieck2010/survey-currents.git",
-        "needed_for": "fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages), global OISST/MUR (fetch_oisst, fetch_mur), ERA5 atmosphere (fetch_era5), global currents (fetch_oscar, fetch_cmems_currents), NASA FIRMS active fires (fetch_firms), NSIDC sea-ice concentration (fetch_nsidc)",
+        "needed_for": "fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages), global OISST/MUR (fetch_oisst, fetch_mur), ERA5 atmosphere (fetch_era5), global currents (fetch_oscar, fetch_cmems_currents), NASA FIRMS active fires (fetch_firms), NSIDC sea-ice concentration (fetch_nsidc), GPM IMERG precipitation (fetch_imerg)",
     },
     "survey-animate": {
         "module": "animate",
@@ -105,8 +105,9 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
     # (survey-currents >= 0.3.0), the ERA5 atmosphere adapter
     # (survey-currents >= 0.4.0), the global-currents adapters
     # (survey-currents >= 0.5.0), the FIRMS active-fire adapter
-    # (survey-currents >= 0.6.0), and the NSIDC sea-ice adapter
-    # (survey-currents >= 0.7.0) are optional: older peers simply lack
+    # (survey-currents >= 0.6.0), the NSIDC sea-ice adapter
+    # (survey-currents >= 0.7.0), and the GPM IMERG precipitation adapter
+    # (survey-currents >= 0.8.0) are optional: older peers simply lack
     # them, and the pipeline falls back to the legacy paths.
     try:
         viz_sources = importlib.import_module("viz.sources")
@@ -132,6 +133,10 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         sea_ice = importlib.import_module("currents.sea_ice")
     except ImportError:
         sea_ice = None
+    try:
+        imerg = importlib.import_module("currents.imerg")
+    except ImportError:
+        imerg = None
 
     return types.SimpleNamespace(
         parse_description=viz.parse_description,
@@ -150,6 +155,7 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
                               if currents_global else None),
         fetch_firms=(fires.fetch_firms if fires else None),
         fetch_nsidc=(sea_ice.fetch_nsidc_sic if sea_ice else None),
+        fetch_imerg=(imerg.fetch_imerg if imerg else None),
         # GLSEA grid bounds (lon_min, lat_min, lon_max, lat_max); the pipeline
         # clamps spec bboxes into this window before fetching, because the
         # lake-superior gazetteer bbox starts slightly west of the grid floor.
