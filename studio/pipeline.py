@@ -71,9 +71,19 @@ ICE_VARIABLES = ("sea-ice",)
 #: it honestly, never misrendering a blackout as a lights map.
 NIGHT_VARIABLES = ("night-lights",)
 
+#: The GEBCO variables (GEBCO 2024 global topography/bathymetry via
+#: ``currents.basemaps``, survey-currents >= 0.10.0, survey-viz >=
+#: 0.9.0). Fetchable in any region — the 15 arc-second grid is
+#: global. ``country-borders`` is deliberately NOT in this list: it
+#: parses (survey-viz >= 0.9.0) but has no fetch adapter, because
+#: Natural Earth country vectors are cartographic context, not a data
+#: variable — plan_fetch refuses it honestly, never rendering an
+#: empty map.
+GEBCO_VARIABLES = ("bathymetry", "elevation")
+
 #: Variables with a fetch adapter: SST + the ERA5 atmosphere set +
-#: currents + active fires + sea ice + night lights.
-SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES + FIRE_VARIABLES + ICE_VARIABLES + NIGHT_VARIABLES
+#: currents + active fires + sea ice + night lights + GEBCO topography.
+SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES + FIRE_VARIABLES + ICE_VARIABLES + NIGHT_VARIABLES + GEBCO_VARIABLES
 
 #: Region keys of the 5 Great Lakes (currents have no adapter there).
 GREAT_LAKES_KEYS = frozenset(FETCHABLE_REGION_TO_LAKE)
@@ -90,6 +100,7 @@ SOURCE_LABELS = {
     "nsidc": "NSIDC Sea Ice Index (G02135 v4.0)",
     "imerg": "NASA GPM IMERG V07",
     "blackmarble": "NASA Black Marble VNP46A2",
+    "gebco": "GEBCO 2024",
 }
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
@@ -303,6 +314,29 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             variable=variable,
             kind="no_adapter",
         )
+    # Country borders (survey-viz >= 0.9.0). ``country-borders`` is
+    # refused honestly here: Natural Earth country vectors are
+    # cartographic context (drawn as the coastline underlay on every
+    # map), not a data variable — rendering them alone would be an
+    # empty map, so the request is refused instead. This check runs
+    # before the region fall-through so the refusal names the real
+    # reason instead of the legacy-path message.
+    if variable == "country-borders":
+        return FetchPlan(
+            fetchable=False,
+            reason=(
+                "Country borders ('country-borders') have no fetch "
+                "adapter: Natural Earth country vectors are a "
+                "cartographic underlay, not a data variable. Country "
+                "coastlines are drawn on every map automatically — "
+                "asking for a data variable instead (e.g. 'bathymetry', "
+                "'elevation', 'sea surface temperature') renders a map "
+                "with borders as context."
+            ),
+            region_key=region_key,
+            variable=variable,
+            kind="no_adapter",
+        )
     if variable == "sea-ice" and source != "nsidc":
         return FetchPlan(
             fetchable=False,
@@ -453,6 +487,38 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             region_key=region_key,
             variable=variable,
             source="blackmarble",
+        )
+
+    # GEBCO topography/bathymetry (survey-viz >= 0.9.0,
+    # survey-currents >= 0.10.0): fetchable in ANY region — the 15
+    # arc-second grid is global, so no region-key check applies. Only
+    # the "bathymetry"/"elevation" variables: an explicit gebco pin on
+    # another variable is refused as a bad variable. ``country-borders``
+    # never reaches this branch — viz.sources.default_source refuses it
+    # honestly (Natural Earth vectors are a cartographic underlay, not
+    # a data variable), and plan_fetch refuses it below.
+    if source == "gebco":
+        if variable not in GEBCO_VARIABLES:
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Source 'gebco' only serves the 'bathymetry' / "
+                    f"'elevation' variables; got variable '{variable}'."
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
+        return FetchPlan(
+            fetchable=True,
+            reason=(
+                f"Region '{region_key}' is fetchable via "
+                f"{SOURCE_LABELS['gebco']} (variable '{variable}', "
+                "source 'gebco')."
+            ),
+            region_key=region_key,
+            variable=variable,
+            source="gebco",
         )
 
     if not is_fetchable(region_key):
@@ -625,6 +691,10 @@ def _field_to_dict(field: Any) -> Dict[str, Any]:
     Black Marble night lights, survey-currents >= 0.9.0) needs no
     adaptation either: its 3D ``values`` (nW/cm²/sr radiance, NaN for
     unlit/missing) flow through the generic attribute path unchanged.
+    A survey-currents ``TopoField`` (GEBCO 2024 topography/bathymetry,
+    survey-currents >= 0.10.0) needs no adaptation either: its 3D
+    ``values`` (metres, positive up) flow through the generic
+    attribute path unchanged.
     """
 
     # FireField (NASA FIRMS active fires): bin detections into daily
@@ -970,6 +1040,45 @@ def run_pipeline(
             ) from exc
         series = None
         fetch_key = "blackmarble"
+    elif source == "gebco":
+        # GEBCO 2024 global topography/bathymetry: fetch_gebco(bbox,
+        # resolution=...) on the spec bbox directly — the grid is
+        # global, nothing to clamp. Static compilation: no time axis,
+        # so resolution is picked from the bbox span (grid stays <=
+        # ~720 cells per axis). series=None: there is no lake-average
+        # equivalent; render_viz shows a placeholder chart panel.
+        # _field_to_dict adapts the TopoField via its 3D ``values``
+        # (metres, positive up).
+        label = SOURCE_LABELS[source]
+        report(0.05, f"Fetching {label} topography…")
+        fetch_fn = getattr(peers, "fetch_gebco", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                "Source 'gebco' needs survey-currents>=0.10.0 with the "
+                "GEBCO basemap adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        lon_min, lat_min, lon_max, lat_max = (float(v) for v in spec.bbox)
+        span = max(lon_max - lon_min, lat_max - lat_min)
+        resolution = 0.25
+        for candidate in (0.25, 0.5, 1.0, 2.0):
+            if span / candidate <= 720:
+                resolution = candidate
+                break
+        else:
+            resolution = 2.0
+        try:
+            field = fetch_fn(tuple(spec.bbox), resolution=resolution)
+        except Exception as exc:
+            raise RuntimeError(
+                f"GEBCO fetch failed ({type(exc).__name__}: {exc}). "
+                "Check the network connection. The first fetch in a new "
+                "region downloads the intersecting 90° tile entries "
+                "(~500 MB each, cached afterwards); a corrupt cache entry "
+                "is re-downloaded automatically."
+            ) from exc
+        series = None
+        fetch_key = "gebco"
     else:
         # Global SST (OISST/MUR): fetch on the spec bbox directly — the
         # global grids have no lake bounds to clamp to — and render with

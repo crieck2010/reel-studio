@@ -88,9 +88,13 @@ four lakes' bboxes already fit the grid.
   `currents` stays an honest refusal (no lake-scale current adapter);
   `night-lights` via NASA Black Marble VNP46A2 V002 in any region
   (needs `survey-currents>=0.9.0`, `h5py` via
-  `survey-currents[blackmarble]`, and a free Earthdata Login), and
+  `survey-currents[blackmarble]`, and a free Earthdata Login),
+  `bathymetry` / `elevation` via GEBCO 2024 in any region (needs
+  `survey-currents>=0.10.0`, no account, no heavy deps), and
   `power-outage` stays an honest refusal (change detection, not a
-  single-epoch map).
+  single-epoch map). `country-borders` stays an honest refusal too
+  (Natural Earth vectors are a cartographic underlay, not a data
+  variable).
 * Anything else → `plan_fetch` returns `fetchable=False` with a message
   naming the missing adapter; `run_pipeline` raises
   `UnfetchableRegionError` / `UnsupportedVariableError`; the app shows
@@ -213,6 +217,33 @@ four lakes' bboxes already fit the grid.
 * `_field_to_dict` adapts a survey-currents `LightsField` through the
   generic 3D-`values` path — nW/cm²/sr radiance with NaN for
   unlit/missing — zero renderer changes.
+
+## GEBCO topography contract (survey-viz 0.9.0 / survey-currents 0.10.0)
+
+* `wire_peers` exposes `fetch_gebco` lazily (None when
+  survey-currents < 0.10.0 — the pipeline then raises the honest
+  upgrade message naming `survey-currents>=0.10.0`).
+* `run_pipeline` calls `fetch_gebco(bbox, resolution=...)` on the spec
+  bbox directly (the GEBCO grid is global — nothing to clamp), picking
+  the resolution from the bbox span so the downsampled grid stays <=
+  ~720 cells per axis; `series=None` (static compilation — no time
+  axis; the chart panel shows a placeholder). Provenance key is
+  `fetch["gebco"]` (SHA-256 sidecars + intersecting 90° tile list +
+  structural timestamp `2024-01-01T00:00:00Z` = release year). The
+  first fetch in a new region downloads the intersecting 90° tile
+  entries (~500 MB each, cached afterwards); the fetch failure
+  message says so and names the cache re-download behaviour.
+* `plan_fetch` routes `gebco` (the source comes from
+  `viz.sources.resolve_source` on survey-viz >= 0.9.0: any region,
+  `variable="bathymetry"`/`"elevation"` always pins `gebco`). A
+  `gebco` pin on any other variable is refused as `bad_variable`.
+  `variable="country-borders"` is refused honestly as `no_adapter`
+  before the region fall-through: Natural Earth vectors are a
+  cartographic underlay, not a data variable — the refusal names the
+  real reason, not the legacy-path message.
+* `_field_to_dict` adapts a survey-currents `TopoField` through the
+  generic 3D-`values` path — metres, positive up — zero renderer
+  changes.
 
 ## ERA5 contract (survey-viz 0.3.0 / survey-currents 0.4.0)
 

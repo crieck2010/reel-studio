@@ -106,8 +106,10 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
     # (survey-currents >= 0.4.0), the global-currents adapters
     # (survey-currents >= 0.5.0), the FIRMS active-fire adapter
     # (survey-currents >= 0.6.0), the NSIDC sea-ice adapter
-    # (survey-currents >= 0.7.0), and the GPM IMERG precipitation adapter
-    # (survey-currents >= 0.8.0) are optional: older peers simply lack
+    # (survey-currents >= 0.7.0), the GPM IMERG precipitation adapter
+    # (survey-currents >= 0.8.0), the Black Marble night-lights adapter
+    # (survey-currents >= 0.9.0), and the GEBCO basemap adapter
+    # (survey-currents >= 0.10.0) are optional: older peers simply lack
     # them, and the pipeline falls back to the legacy paths.
     try:
         viz_sources = importlib.import_module("viz.sources")
@@ -141,6 +143,10 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         blackmarble = importlib.import_module("currents.blackmarble")
     except ImportError:
         blackmarble = None
+    try:
+        basemaps = importlib.import_module("currents.basemaps")
+    except ImportError:
+        basemaps = None
 
     return types.SimpleNamespace(
         parse_description=viz.parse_description,
@@ -162,6 +168,7 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         fetch_imerg=(imerg.fetch_imerg if imerg else None),
         fetch_blackmarble=(blackmarble.fetch_blackmarble
                            if blackmarble else None),
+        fetch_gebco=(basemaps.fetch_gebco if basemaps else None),
         # GLSEA grid bounds (lon_min, lat_min, lon_max, lat_max); the pipeline
         # clamps spec bboxes into this window before fetching, because the
         # lake-superior gazetteer bbox starts slightly west of the grid floor.

@@ -5,6 +5,19 @@ All notable changes to reel-studio. Format follows [Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- GEBCO topography/bathymetry flow-through (needs survey-viz 0.9.0 +
+  survey-currents 0.10.0): `plan_fetch` routes source `"gebco"` as
+  fetchable in any region for `bathymetry`/`elevation` (a `gebco` pin
+  on any other variable is refused as `bad_variable`);
+  `variable="country-borders"` is refused honestly as `no_adapter`
+  before the region fall-through (Natural Earth vectors are a
+  cartographic underlay, not a data variable). `run_pipeline` calls
+  `fetch_gebco(bbox, resolution=...)` on the spec bbox directly
+  (resolution picked from the bbox span, <= ~720 cells per axis),
+  renders with `series=None`, and records `fetch["gebco"]`
+  provenance. `wire_peers` exposes `fetch_gebco` (optional — honest
+  upgrade message on survey-currents < 0.10.0). Documented in
+  `docs/INTEROP.md`.
 - ERA5 atmosphere flow-through (needs survey-viz 0.3.0 +
   survey-currents 0.4.0): `plan_fetch` routes source `"era5"` as
   fetchable in any region for `wind`/`msl`/`t2m`/`tp`;

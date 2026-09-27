@@ -232,7 +232,7 @@ def _fake_import_imerg(name, *a, **k):
     if name in ("viz.sources", "currents.sst_global", "currents.era5",
                 "currents.currents_global", "currents.fires",
                 "currents.sea_ice",
-                "currents.blackmarble"):
+                "currents.blackmarble", "currents.basemaps"):
         raise ImportError(f"No module named {name!r} (simulated old peer)")
     import importlib
     return importlib.import_module(name, *a, **k)
