@@ -241,7 +241,8 @@ def _fake_import_fires(name, *a, **k):
     if name in ("viz.sources", "currents.sst_global", "currents.era5",
                 "currents.currents_global", "currents.sea_ice",
                 "currents.imerg",
-                "currents.blackmarble", "currents.basemaps", "currents.storms"):
+                "currents.blackmarble", "currents.basemaps", "currents.storms",
+                "currents.grace"):
         raise ImportError(f"No module named {name!r} (simulated old peer)")
     import importlib
     return importlib.import_module(name, *a, **k)

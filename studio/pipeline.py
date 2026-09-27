@@ -87,10 +87,22 @@ GEBCO_VARIABLES = ("bathymetry", "elevation")
 #: is global (1980–present by default).
 STORM_VARIABLES = ("storm-tracks",)
 
+#: The water-storage variable (CSR GRACE/GRACE-FO RL06.3 terrestrial
+#: water storage anomalies via ``currents.grace``, survey-currents >=
+#: 0.12.0, survey-viz >= 0.11.0). Fetchable in any region — the CSR
+#: mascon archive is global and land-only (oceans masked).
+#: ``streamflow`` and ``sea-level`` are deliberately NOT in this list:
+#: they parse (survey-viz >= 0.11.0) but have no fetch adapter —
+#: river discharge has no adapter yet (streamgages are item 11 of the
+#: remote-sensing program), and sea level is satellite altimetry, a
+#: different observable from GRACE terrestrial water storage —
+#: plan_fetch refuses them honestly, never answering with a GRACE map.
+GRACE_VARIABLES = ("water-storage",)
+
 #: Variables with a fetch adapter: SST + the ERA5 atmosphere set +
 #: currents + active fires + sea ice + night lights + GEBCO topography
 #: + IBTrACS storm tracks.
-SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES + FIRE_VARIABLES + ICE_VARIABLES + NIGHT_VARIABLES + GEBCO_VARIABLES + STORM_VARIABLES
+SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES + FIRE_VARIABLES + ICE_VARIABLES + NIGHT_VARIABLES + GEBCO_VARIABLES + STORM_VARIABLES + GRACE_VARIABLES + ("streamflow", "sea-level")
 
 #: Region keys of the 5 Great Lakes (currents have no adapter there).
 GREAT_LAKES_KEYS = frozenset(FETCHABLE_REGION_TO_LAKE)
@@ -109,6 +121,7 @@ SOURCE_LABELS = {
     "blackmarble": "NASA Black Marble VNP46A2",
     "gebco": "GEBCO 2024",
     "ibtracs": "NOAA IBTrACS v04r01",
+    "grace": "CSR GRACE/GRACE-FO RL06.3",
 }
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
@@ -303,6 +316,64 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             source="ibtracs",
         )
 
+    # GRACE terrestrial water storage (survey-viz >= 0.11.0,
+    # survey-currents >= 0.12.0): fetchable in ANY region — the CSR
+    # RL06.3 mascon archive is global and land-only, so no region-key
+    # check applies.
+    if source == "grace":
+        if variable != "water-storage":
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Source 'grace' only serves the 'water-storage' "
+                    f"variable; got variable '{variable}'."
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
+        return FetchPlan(
+            fetchable=True,
+            reason=(
+                f"Region '{region_key}' is fetchable via "
+                f"{SOURCE_LABELS['grace']} (variable '{variable}', "
+                "source 'grace')."
+            ),
+            region_key=region_key,
+            variable=variable,
+            source="grace",
+        )
+    # River discharge / streamflow (survey-viz >= 0.11.0) and sea level
+    # (survey-viz >= 0.11.0) are refused honestly here: no adapter
+    # exists for either, so they are never answered with a GRACE map.
+    if variable == "streamflow":
+        return FetchPlan(
+            fetchable=False,
+            reason=(
+                "River discharge / streamflow ('streamflow') has no fetch "
+                "adapter yet: USGS streamgages are item 11 of the "
+                "remote-sensing program. The description parsed fine; "
+                "asking for 'water storage' or 'groundwater' routes to "
+                "CSR GRACE/GRACE-FO instead."
+            ),
+            region_key=region_key,
+            variable=variable,
+            kind="no_adapter",
+        )
+    if variable == "sea-level":
+        return FetchPlan(
+            fetchable=False,
+            reason=(
+                "Sea level ('sea-level') has no fetch adapter: it is "
+                "satellite altimetry, a different observable from GRACE "
+                "terrestrial water storage, so it is never answered with "
+                "a GRACE map. The description parsed fine; asking for "
+                "'sea level pressure' routes to ERA5 instead."
+            ),
+            region_key=region_key,
+            variable=variable,
+            kind="no_adapter",
+        )
     # Sea ice / land ice (survey-viz >= 0.6.0, survey-currents >= 0.7.0).
     # ``land-ice`` is refused honestly here: glaciers, ice sheets, and
     # icebergs are a different physical product from sea-ice
@@ -844,6 +915,124 @@ def _fetch_storm_context(peers: Any, overlays: List[str], spec: Any,
     return out
 
 
+def _bilinear_resample(grid: np.ndarray,
+                       src_lats: np.ndarray,
+                       src_lons: np.ndarray,
+                       tgt_lats: np.ndarray,
+                       tgt_lons: np.ndarray) -> np.ndarray:
+    """Bilinearly resample a 2-D lat/lon grid onto a target grid.
+
+    Out-of-range target points get NaN; source NaNs are ignored (the
+    weighted mean is computed over the non-NaN corner values). Used to
+    align ERA5 precipitation context onto the GRACE 0.25° grid.
+    """
+    src_lats = np.asarray(src_lats, dtype=float)
+    src_lons = np.asarray(src_lons, dtype=float)
+    grid = np.asarray(grid, dtype=float)
+    if src_lats.ndim != 1 or src_lons.ndim != 1:
+        raise ValueError("src_lats/src_lons must be 1-D")
+    lat_asc = np.argsort(src_lats)
+    lon_asc = np.argsort(src_lons)
+    src_lats = src_lats[lat_asc]
+    src_lons = src_lons[lon_asc]
+    grid = grid[lat_asc][:, lon_asc]
+    tgt_lats = np.asarray(tgt_lats, dtype=float)
+    tgt_lons = np.asarray(tgt_lons, dtype=float)
+    lat_idx = np.interp(tgt_lats, src_lats,
+                        np.arange(len(src_lats), dtype=float),
+                        left=np.nan, right=np.nan)
+    lon_idx = np.interp(tgt_lons, src_lons,
+                        np.arange(len(src_lons), dtype=float),
+                        left=np.nan, right=np.nan)
+    out = np.full((len(tgt_lats), len(tgt_lons)), np.nan)
+    for ti, fi in enumerate(lat_idx):
+        if np.isnan(fi):
+            continue
+        i0 = int(fi)
+        i1 = min(i0 + 1, len(src_lats) - 1)
+        di = fi - i0
+        for tj, fj in enumerate(lon_idx):
+            if np.isnan(fj):
+                continue
+            j0 = int(fj)
+            j1 = min(j0 + 1, len(src_lons) - 1)
+            dj = fj - j0
+            corners = np.array(
+                [grid[i0, j0], grid[i0, j1], grid[i1, j0], grid[i1, j1]])
+            weights = np.array(
+                [(1 - di) * (1 - dj), (1 - di) * dj,
+                 di * (1 - dj), di * dj])
+            ok = ~np.isnan(corners)
+            if ok.any():
+                out[ti, tj] = float(np.sum(corners[ok] * weights[ok])
+                                   / np.sum(weights[ok]))
+    return out
+
+
+def _fetch_water_context(peers: Any, overlays: List[str],
+                         grace_dict: Dict[str, Any],
+                         spec: Any) -> Dict[str, Dict[str, Any]]:
+    """Fetch ERA5 precipitation context for a water-storage render; ``{}`` on failure.
+
+    The water-storage renderer draws an optional ``"tp"`` precipitation
+    contour overlay (``"… vs rainfall"`` descriptions) *over* the GRACE
+    anomaly map. Context is best-effort: a missing ``fetch_era5`` peer,
+    missing CDS credentials, or a failed download degrades gracefully —
+    the renderer records the requested overlay as ``"absent"`` in the
+    manifest instead of failing the reel.
+
+    The ERA5 ``tp`` snapshots are grouped by calendar month (matching
+    the GRACE monthly frames) and averaged; each monthly frame is
+    bilinearly resampled onto the GRACE 0.25° grid so the overlay
+    aligns cell-for-cell. This is approximate context, not a true
+    monthly precipitation accumulation — documented here and in
+    docs/INTEROP.md.
+    """
+    names = [str(o).strip().lower() for o in overlays]
+    if "tp" not in names:
+        return {}
+    era5_fn = getattr(peers, "fetch_era5", None)
+    if era5_fn is None:
+        return {}
+    try:
+        atmo = era5_fn(["tp"], tuple(spec.bbox), spec.start, spec.end,
+                       stride_hours=24)
+    except Exception:
+        return {}
+    grids = getattr(atmo, "overlay_grids", None) or {}
+    arr = grids.get("tp")
+    if arr is None and getattr(atmo, "base_variable", "") == "tp":
+        arr = getattr(atmo, "values", None)
+    if arr is None:
+        return {}
+    era_times = [_time_to_date_str(t) for t in getattr(atmo, "times", [])]
+    era_lats = np.asarray(getattr(atmo, "lats", []), dtype=float)
+    era_lons = np.asarray(getattr(atmo, "lons", []), dtype=float)
+    arr = np.ma.filled(np.ma.asarray(arr, dtype=float), np.nan)
+    grace_times = [str(t)[:10] for t in grace_dict.get("times", [])]
+    grace_lats = np.asarray(grace_dict.get("lats", []), dtype=float)
+    grace_lons = np.asarray(grace_dict.get("lons", []), dtype=float)
+    if not grace_times or not len(grace_lats) or not len(grace_lons):
+        return {}
+    months = []
+    for gtime in grace_times:
+        month = gtime[:7]
+        idx = [i for i, t in enumerate(era_times)
+               if str(t)[:7] == month]
+        if idx:
+            frame = np.nanmean(arr[idx], axis=0)
+        else:
+            frame = np.full((len(era_lats), len(era_lons)), np.nan)
+        months.append(_bilinear_resample(frame, era_lats, era_lons,
+                                         grace_lats, grace_lons))
+    return {"tp": {
+        "times": list(grace_dict.get("times", [])),
+        "lats": grace_lats,
+        "lons": grace_lons,
+        "grid": np.asarray(months),
+    }}
+
+
 def _series_to_dict(series: Any) -> Optional[Dict[str, Any]]:
     """Adapt a survey-currents LakeSeries to survey-viz's duck-typed series.
 
@@ -1218,6 +1407,53 @@ def run_pipeline(
                 render_dict["overlay_grids"] = context
         series = None
         fetch_key = "ibtracs"
+    elif source == "grace":
+        # CSR GRACE/GRACE-FO RL06.3 terrestrial water storage anomalies:
+        # fetch_grace(bbox, start, end) on the spec bbox directly — the
+        # mascon archive is global, nothing to clamp. series=None: there
+        # is no lake-average equivalent; render_viz shows a placeholder
+        # chart panel. The WaterField goes to render_viz as its
+        # to_dict() form (never through _field_to_dict, which only
+        # understands the scalar 3-D CurrentField grid): survey-viz >=
+        # 0.11.0 draws monthly cm-LWE anomaly maps from the "values"
+        # key, with all-NaN gap months rendered as NO GRACE OBSERVATION
+        # panels (never interpolated) and the manifest carrying the
+        # anomaly baseline + gap months. A requested "tp" precipitation
+        # overlay ("… vs rainfall") is fetched as ERA5 context —
+        # monthly means of daily precipitation snapshots, bilinearly
+        # resampled onto the GRACE grid — and attached as an
+        # overlay_grids dict; an unavailable context degrades
+        # gracefully (the renderer records "absent").
+        label = SOURCE_LABELS[source]
+        report(0.05, f"Fetching {label} terrestrial water storage…")
+        fetch_fn = getattr(peers, "fetch_grace", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                "Source 'grace' needs survey-currents>=0.12.0 with the "
+                "GRACE water-storage adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        try:
+            field = fetch_fn(tuple(spec.bbox), spec.start, spec.end)
+        except Exception as exc:
+            raise RuntimeError(
+                f"GRACE fetch failed ({type(exc).__name__}: {exc}). "
+                "Check the network connection and that netCDF4 is "
+                "installed (pip install netCDF4). The CSR archive is "
+                "keyless HTTPS (no account needed), so this is usually "
+                "a connectivity issue."
+            ) from exc
+        render_dict = (field.to_dict() if hasattr(field, "to_dict")
+                       else field)
+        overlays = [str(o) for o in (getattr(spec, "overlays", None) or ())]
+        if overlays and isinstance(render_dict, dict):
+            context = _fetch_water_context(peers, overlays, render_dict,
+                                           spec)
+            if context:
+                render_dict = dict(render_dict)
+                render_dict["overlay_grids"] = context
+        series = None
+        fetch_key = "grace"
     else:
         # Global SST (OISST/MUR): fetch on the spec bbox directly — the
         # global grids have no lake bounds to clamp to — and render with
@@ -1278,7 +1514,9 @@ def run_pipeline(
             # "sst" for the SST adapters, "era5" for the atmosphere adapter,
             # "oscar"/"cmems-currents" for the currents adapters, "firms"
             # for active fires, "nsidc" for sea ice, "imerg" for
-            # precipitation, "blackmarble" for night lights (the field
+            # precipitation, "blackmarble" for night lights, "gebco" for
+            # topography, "ibtracs" for storm tracks, "grace" for
+            # terrestrial water storage (the field
             # provenance carries the source-specific payload).
             fetch_key: dict(getattr(field, "provenance", {}) or {}),
             "averages": dict(getattr(series, "provenance", {}) or {}),

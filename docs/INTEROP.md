@@ -93,11 +93,17 @@ four lakes' bboxes already fit the grid.
   `survey-currents>=0.10.0`, no account, no heavy deps),
   `storm-tracks` via NOAA IBTrACS v04r01 best tracks in any region
   (needs `survey-currents>=0.11.0` + `survey-viz>=0.10.0`, keyless,
+  `netCDF4`),
+  `water-storage` via CSR GRACE/GRACE-FO RL06.3 monthly terrestrial
+  water storage anomalies in any region (needs
+  `survey-currents>=0.12.0` + `survey-viz>=0.11.0`, keyless, land-only,
   `netCDF4`), and
   `power-outage` stays an honest refusal (change detection, not a
   single-epoch map). `country-borders` stays an honest refusal too
   (Natural Earth vectors are a cartographic underlay, not a data
-  variable).
+  variable). `streamflow` and `sea-level` stay honest refusals as well
+  (no adapter yet for river discharge; sea level is altimetry, not a
+  GRACE map).
 * Anything else → `plan_fetch` returns `fetchable=False` with a message
   naming the missing adapter; `run_pipeline` raises
   `UnfetchableRegionError` / `UnsupportedVariableError`; the app shows
@@ -275,6 +281,41 @@ four lakes' bboxes already fit the grid.
   a failed download degrades gracefully (the renderer records
   `"absent"` per overlay in the manifest) instead of failing the
   reel.
+
+## GRACE water-storage contract (survey-viz 0.11.0 / survey-currents 0.12.0)
+
+* `wire_peers` exposes `fetch_grace` (None when survey-currents <
+  0.12.0 — the pipeline then raises the honest upgrade message).
+* `plan_fetch` routes `grace` (the source comes from
+  `viz.sources.resolve_source` on survey-viz >= 0.11.0: any region,
+  `variable="water-storage"` always pins `grace`). A `grace` pin on
+  any other variable is refused as `bad_variable`; `streamflow`
+  ("river discharge", no adapter yet) and `sea-level` (satellite
+  altimetry, not terrestrial water storage) are refused honestly as
+  `no_adapter` — never answered with a GRACE map.
+* `run_pipeline` calls
+  `fetch_grace(bbox, start, end)` — the keyless CSR RL06.3 NetCDF
+  (2002–present, 0.25° output grid) plus the separate land mask are
+  global, so nothing is clamped. Months with no solution (e.g. the
+  2017-07 … 2018-05 inter-mission gap) are all-NaN frames — never
+  interpolated.
+* The `WaterField` goes to `render_viz` as its `to_dict()` form
+  (`"values"` key, monthly cm-LWE anomaly maps) — **never** through
+  `_field_to_dict`, which only understands scalar 3-D grids.
+  Provenance rides on the field object (`fetch["grace"]`: product,
+  solution+mask URLs, SHA-256 digests, anomaly baseline, gap months);
+  `series=None`.
+* A requested `"tp"` precipitation overlay ("… vs rainfall") is
+  fetched via `fetch_era5(["tp"], bbox, start, end, stride_hours=24)`
+  by `_fetch_water_context`, grouped into monthly means, and
+  bilinearly resampled onto the GRACE grid
+  (`_bilinear_resample`) before being attached as an `overlay_grids`
+  dict — survey-viz >= 0.11.0 draws the contours over the anomaly
+  map. The resampled precipitation is approximate context (monthly
+  means of daily snapshots, not a true accumulation), and the whole
+  overlay is best-effort: a missing peer, missing CDS credentials, or
+  a failed download degrades gracefully (the renderer records
+  `"absent"` in the manifest) instead of failing the reel.
 
 ## ERA5 contract (survey-viz 0.3.0 / survey-currents 0.4.0)
 

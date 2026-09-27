@@ -26,7 +26,7 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
     "survey-currents": {
         "module": "currents",
         "pip": "pip install git+https://github.com/crieck2010/survey-currents.git",
-        "needed_for": "fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages), global OISST/MUR (fetch_oisst, fetch_mur), ERA5 atmosphere (fetch_era5), global currents (fetch_oscar, fetch_cmems_currents), NASA FIRMS active fires (fetch_firms), NSIDC sea-ice concentration (fetch_nsidc), GPM IMERG precipitation (fetch_imerg), NASA Black Marble night lights (fetch_blackmarble), NOAA IBTrACS storm tracks (fetch_ibtracs)",
+        "needed_for": "fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages), global OISST/MUR (fetch_oisst, fetch_mur), ERA5 atmosphere (fetch_era5), global currents (fetch_oscar, fetch_cmems_currents), NASA FIRMS active fires (fetch_firms), NSIDC sea-ice concentration (fetch_nsidc), GPM IMERG precipitation (fetch_imerg), NASA Black Marble night lights (fetch_blackmarble), NOAA IBTrACS storm tracks (fetch_ibtracs), CSR GRACE/GRACE-FO water storage (fetch_grace)",
     },
     "survey-animate": {
         "module": "animate",
@@ -110,7 +110,8 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
     # (survey-currents >= 0.8.0), the Black Marble night-lights adapter
     # (survey-currents >= 0.9.0), the GEBCO basemap adapter
     # (survey-currents >= 0.10.0), and the IBTrACS storm-track adapter
-    # (survey-currents >= 0.11.0) are optional: older peers simply lack
+    # (survey-currents >= 0.11.0), and the GRACE water-storage adapter
+    # (survey-currents >= 0.12.0) are optional: older peers simply lack
     # them, and the pipeline falls back to the legacy paths.
     try:
         viz_sources = importlib.import_module("viz.sources")
@@ -152,6 +153,10 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         storms = importlib.import_module("currents.storms")
     except ImportError:
         storms = None
+    try:
+        grace = importlib.import_module("currents.grace")
+    except ImportError:
+        grace = None
 
     return types.SimpleNamespace(
         parse_description=viz.parse_description,
@@ -175,6 +180,7 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
                            if blackmarble else None),
         fetch_gebco=(basemaps.fetch_gebco if basemaps else None),
         fetch_ibtracs=(storms.fetch_ibtracs if storms else None),
+        fetch_grace=(grace.fetch_grace if grace else None),
         # GLSEA grid bounds (lon_min, lat_min, lon_max, lat_max); the pipeline
         # clamps spec bboxes into this window before fetching, because the
         # lake-superior gazetteer bbox starts slightly west of the grid floor.
