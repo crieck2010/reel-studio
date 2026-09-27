@@ -5,6 +5,6 @@ is ``app.py`` at the repo root. Peers (survey-viz, survey-currents,
 survey-animate) are optional and never hard-imported.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = ["__version__"]

@@ -12,9 +12,9 @@ points listed here.
 |---|---|---|
 | `parse_description` | `(text, title=None, today=None) -> VizSpec`; raises `UnparseableDescription` | Step 1 parsing |
 | `VizSpec` | dataclass; `to_dict()` / `from_dict()`; validated on construction | the spec contract; session state stores the dict |
-| `is_fetchable` | `(region_key) -> bool`; True only for the 5 Great Lakes | fetch planning |
+| `is_fetchable` | `(region_key) -> bool`; True for gazetteer regions the installed peers can serve (13 sources as of survey-viz 0.15.0) | fetch planning |
 | `get_region` | `(key) -> dict \| None` | (available; currently unused) |
-| `render_viz` | `(spec, field, series=None, out_dir="frames", layout="reel-vertical", style=None) -> (frames, manifest_path)` | Step 2 frame rendering |
+| `render_viz` | `(spec, field, series=None, out_dir="frames", layout="reel-vertical", style=None, underlay=None, cmap=None) -> (frames, manifest_path)` | Step 3 frame rendering; `cmap` needs survey-viz ≥ 0.15.0 (validated override, continuous maps only — categorical renderers keep fixed colors); `run_pipeline` only passes `cmap` when set, so older peers keep working |
 
 `field`/`series` are **duck-typed**: reel-studio passes the documented
 dict forms — `{"times", "lats", "lons", "values"}` and

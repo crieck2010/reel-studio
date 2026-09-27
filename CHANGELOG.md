@@ -2,6 +2,33 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.0] - 2026-09-27
+
+### Added
+- **Aesthetics step** (new step 2 in the app, between Parse and Run):
+  - *Style* picker: Dark (`reel-dark`, default) / Light.
+  - *Title* text input, seeded from the parsed title.
+  - *Footer caption* (optional): a custom line prepended to the frame
+    footer; per-renderer honesty wording (e.g. the earthquake catalog's
+    "observed events — not a forecast") is always kept. Needs
+    survey-viz >= 0.15.0; older peers degrade gracefully (caption is
+    dropped, never a crash).
+  - *Basemap underlay* checkbox (GEBCO tint + Natural Earth coastlines).
+  - *Colormap* picker: Automatic plus the 30 `viz.CURATED_CMAPS` names
+    (needs survey-viz >= 0.15.0, otherwise the app says so and keeps
+    the variable default). Applies to continuous data maps only — for
+    storm tracks, streamgages, and earthquakes the app explains that
+    their fixed scientific colors are kept.
+- `pipeline.run_pipeline(..., cmap=None)`: UI-neutral colormap
+  passthrough to `peers.render_viz`. `cmap=None` (default) is never
+  passed, so older survey-viz peers and existing duck-typed fakes keep
+  working untouched.
+
+### Changed
+- App steps renumbered: 1 Parse · 2 Aesthetics · 3 Run · 4 Your reel.
+- Minimum survey-viz for the new aesthetics controls: v0.15.0
+  (peer table in README updated).
+
 ## [Unreleased]
 
 ### Added

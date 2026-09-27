@@ -17,7 +17,7 @@ inspectable reason it was chosen. No LLM is required at runtime.
 | Repo | Role | Version tested |
 |---|---|---|
 | [survey-currents](https://github.com/crieck2010/survey-currents) | Data-fetch engines for all 13 sources | v0.15.0 |
-| [survey-viz](https://github.com/crieck2010/survey-viz) | Description parser + reel frame renderer | v0.14.1 |
+| [survey-viz](https://github.com/crieck2010/survey-viz) | Description parser + reel frame renderer | v0.15.0 |
 | [survey-animate](https://github.com/crieck2010/survey-animate) | Frames → MP4 encoder (resolves ffmpeg) | v0.1.0 |
 | **reel-studio** (this repo) | Streamlit web app + UI-free pipeline orchestration | — |
 
@@ -145,10 +145,16 @@ The app works **fully** without the key — it is never required. See
 * **Step 1** — text area with an example description, **Parse** button, then the parsed
   `VizSpec` rendered as JSON (title, `region_key`, `bbox`, `variable`, pinned `source`
   with its selection reason, `start`/`end`, `cadence`).
-* **Step 2** — **Run** button, progress bar with live status messages ("Fetching
+* **Step 2 — Aesthetics** — style picker (Dark/Light), title and optional
+  footer-caption inputs, basemap-underlay checkbox, and a colormap picker
+  (Automatic + 30 curated names; continuous data maps only — categorical
+  products like earthquakes keep their fixed scientific colors). **Apply
+  aesthetics** validates the tweaks against the installed survey-viz and
+  shows the spec that will run.
+* **Step 3** — **Run** button, progress bar with live status messages ("Fetching
   NOAA GLSEA sea-surface-temperature grid…", "Rendering reel frames…", "Encoding
   MP4…").
-* **Step 3** — embedded video player, **Download MP4** button, and a *Provenance*
+* **Step 4** — embedded video player, **Download MP4** button, and a *Provenance*
   expander with fetch URLs, SHA-256 digests, and the spec.
 
 ## Docs
@@ -167,7 +173,7 @@ pytest tests/
 
 The suite covers the UI-free pipeline (`studio/pipeline.py`), peer wiring with graceful
 degradation, source selection, provenance, and the offline demo. Fresh-clone verified
-against the released peers: 226 passed.
+against the released peers: 234 passed.
 
 ## Manual smoke check
 

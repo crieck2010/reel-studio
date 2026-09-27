@@ -1256,6 +1256,7 @@ def run_pipeline(
     progress: Optional[Callable[[float, str], None]] = None,
     stride_days: int = DEFAULT_STRIDE_DAYS,
     stride_hours: int = DEFAULT_STRIDE_HOURS,
+    cmap: Optional[str] = None,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1276,6 +1277,13 @@ def run_pipeline(
             and ignores it.
         stride_hours: time-axis stride for the ERA5 fetch call (hourly
             reanalysis; 24 = daily 12:00 UTC).
+        cmap: optional matplotlib colormap name overriding the data map's
+            colormap (survey-viz >= 0.15.0; ``viz.CURATED_CMAPS`` lists
+            the recommended names). ``None`` (default) keeps the peer's
+            variable default and is never passed, so older survey-viz
+            peers keep working. Categorical renderers (storms,
+            streamgages, earthquakes) validate but ignore it — see
+            survey-viz docs.
 
     Raises:
         UnfetchableRegionError / UnsupportedVariableError: honest,
@@ -1838,7 +1846,8 @@ def run_pipeline(
                     else _field_to_dict(field))
     frames, manifest_path = peers.render_viz(
         spec, render_field, _series_to_dict(series),
-        out_dir=frames_dir)
+        out_dir=frames_dir,
+        **({"cmap": cmap} if cmap is not None else {}))
 
     # -- 3. encode ------------------------------------------------------------
     # NOTE: pass the frames DIRECTORY, not the viz manifest path:

@@ -18,6 +18,7 @@ the deterministic parser fails; the app works fully without it.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import sys
@@ -126,6 +127,117 @@ def _parse_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     st.json(spec_dict)
 
 
+def _aesthetics_step(statuses: Dict[str, peers.PeerStatus]) -> None:
+    """Step 2: style / title / caption / underlay / colormap controls.
+
+    Reads the parsed ``spec_dict`` from session state, lets the user
+    tweak the aesthetics, and writes the validated result back on
+    "Apply aesthetics". Widget keys embed a hash of the current spec
+    so a re-parse always resets the controls to the new spec's values.
+    """
+    st.subheader("2 · Aesthetics")
+    spec_dict: Optional[Dict[str, Any]] = st.session_state.get("spec_dict")
+    if not spec_dict:
+        st.info("Parse a description first (step 1).")
+        return
+
+    status = statuses["survey-viz"]
+    viz = status.module if status.installed else None
+    rev = abs(hash(json.dumps(spec_dict, sort_keys=True, default=str)))
+
+    style = st.selectbox(
+        "Style",
+        options=["reel-dark", "light"],
+        format_func=lambda v: {"reel-dark": "Dark", "light": "Light"}[v],
+        index=["reel-dark", "light"].index(
+            spec_dict.get("style") or "reel-dark"),
+        key=f"aes_style_{rev}",
+        help="Dark: near-black background, turbo default colormap. "
+             "Light: white background, viridis default colormap.",
+    )
+    title = st.text_input(
+        "Title",
+        value=spec_dict.get("title") or "",
+        key=f"aes_title_{rev}",
+        help="Burned into the top of every frame.",
+    )
+    caption = st.text_input(
+        "Footer caption (optional)",
+        value=spec_dict.get("caption") or "",
+        key=f"aes_caption_{rev}",
+        help="A custom line prepended to the frame footer, e.g. your "
+             "channel name. Per-renderer honesty wording (such as the "
+             "earthquake catalog's “observed events — not a forecast”) "
+             "is always kept.",
+    )
+    underlay = st.checkbox(
+        "Basemap underlay (GEBCO tint + Natural Earth coastlines)",
+        value=bool(spec_dict.get("underlay", True)),
+        key=f"aes_underlay_{rev}",
+        help="Drawn beneath the data map wherever the variable is NaN. "
+             "For earthquakes this is the topographic context.",
+    )
+
+    # Colormap: needs survey-viz >= 0.15.0 (viz.CURATED_CMAPS).
+    curated = list(getattr(viz, "CURATED_CMAPS", None) or [])
+    categorical = spec_dict.get("variable") in (
+        "storm-tracks", "streamflow", "earthquakes")
+    cmap: Optional[str] = None
+    if not curated:
+        st.info("Colormap choices need survey-viz ≥ 0.15.0 — "
+                f"upgrade it (`{status.pip_command}`) to unlock them. "
+                "The variable default is used in the meantime.")
+        st.session_state["cmap"] = None
+    elif categorical:
+        st.info("Colormap does not apply here: "
+                f"`{spec_dict.get('variable')}` uses fixed scientific "
+                "colors (Saffir-Simpson / WaterWatch / depth bins), so the "
+                "variable default is kept.")
+        st.session_state["cmap"] = None
+    else:
+        auto = "Automatic (variable default)"
+        options = [auto] + curated
+        current = st.session_state.get("cmap")
+        choice = st.selectbox(
+            "Colormap",
+            options=options,
+            index=options.index(current) if current in options else 0,
+            key=f"aes_cmap_{rev}",
+            help="Recolors continuous data maps only (SST, chlorophyll, "
+                 "precipitation, night lights, ...).",
+        )
+        cmap = None if choice == auto else choice
+        st.session_state["cmap"] = cmap
+
+    if not st.button(
+        "Apply aesthetics",
+        type="secondary",
+        help="Applies the title, style, caption, and underlay to the spec "
+             "that the run below uses. The colormap applies immediately — "
+             "no need to press this for it.",
+    ):
+        return
+
+    new_dict = dict(spec_dict)
+    new_dict["title"] = title
+    new_dict["style"] = style
+    new_dict["underlay"] = underlay
+    new_dict["caption"] = caption.strip() or None
+    # Older survey-viz peers (< 0.15.0) have no caption field; drop it
+    # rather than crashing their from_dict.
+    if viz is not None:
+        if "caption" not in inspect.signature(viz.VizSpec).parameters:
+            new_dict.pop("caption", None)
+    try:
+        viz.VizSpec.from_dict(new_dict)  # validate before storing
+    except (TypeError, ValueError) as exc:
+        st.error(f"Those aesthetics did not validate: {exc}")
+        return
+    st.session_state["spec_dict"] = new_dict
+    st.success("Aesthetics applied — the spec below is what will run.")
+    st.json(new_dict)
+
+
 def _make_assist_fn(statuses: Dict[str, peers.PeerStatus]):
     """Build the one-shot LLM assist callable, or None when disabled."""
     viz_status = statuses["survey-viz"]
@@ -146,7 +258,7 @@ def _make_assist_fn(statuses: Dict[str, peers.PeerStatus]):
 
 
 def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
-    st.subheader("2 · Run the pipeline")
+    st.subheader("3 · Run the pipeline")
     spec_dict: Optional[Dict[str, Any]] = st.session_state.get("spec_dict")
     if not spec_dict:
         st.info("Parse a description first (step 1).")
@@ -174,7 +286,8 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
 
     try:
         result = pipeline.run_pipeline(
-            spec, wired, out_dir, progress=on_progress)
+            spec, wired, out_dir, progress=on_progress,
+            cmap=st.session_state.get("cmap"))
     except (pipeline.UnfetchableRegionError,
             pipeline.UnsupportedVariableError) as exc:
         progress_bar.empty()
@@ -208,7 +321,7 @@ def _show_result() -> None:
     result = st.session_state.get("result")
     if not result:
         return
-    st.subheader("3 · Your reel")
+    st.subheader("4 · Your reel")
     video_path = result["video_path"]
     st.video(video_path)
     with open(video_path, "rb") as fh:
@@ -229,12 +342,14 @@ def main() -> None:
     st.title("🎬 reel-studio")
     st.caption(
         "Plain-English description → Great-Lakes SST fetch → vertical "
-        "reel MP4. v0.1.0 · 100% local.")
+        "reel MP4. v0.2.0 · 100% local.")
 
     statuses = peers.load_peers()
     _peer_status_panel(statuses)
     st.divider()
     _parse_step(statuses)
+    st.divider()
+    _aesthetics_step(statuses)
     st.divider()
     _run_step(statuses)
 

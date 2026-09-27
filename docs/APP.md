@@ -13,7 +13,7 @@ thin studio layer over three engines:
 * **survey-animate** — frame → MP4 encoder (`render_video`, resolves
   ffmpeg itself)
 
-## The 3-step flow
+## The 4-step flow
 
 ### Step 1 — Describe and parse
 
@@ -29,27 +29,51 @@ parser (no AI, no network) and shows the resulting `VizSpec` as JSON —
 for confirmation. If the parser can't handle the description you get a
 clear error with examples that do parse.
 
-### Step 2 — Run the pipeline
+### Step 2 — Aesthetics
+
+Style the reel before it runs:
+
+* **Style** — Dark (`reel-dark`, the default) or Light.
+* **Title** — burned into the top of every frame; seeded from the
+  parsed title.
+* **Footer caption** (optional) — a custom line prepended to the frame
+  footer, e.g. your channel name. Per-renderer honesty wording is
+  always kept (the earthquake catalog's "observed events — not a
+  forecast" can never be erased by a caption).
+* **Basemap underlay** — GEBCO tint + Natural Earth coastlines beneath
+  the data map; uncheck for a flat background.
+* **Colormap** — Automatic (the variable default) or any of the 30
+  curated colormaps. Applies to continuous data maps only; storm
+  tracks, streamgages, and earthquakes keep their fixed scientific
+  colors, and the app tells you so. Needs survey-viz ≥ 0.15.0 — with
+  an older peer the app says so and keeps the default.
+
+Press **Apply aesthetics** to validate the tweaks and store the spec
+that will run (the colormap applies immediately, without the button).
+
+### Step 3 — Run the pipeline
 
 Press **Run — fetch, render, encode**. With a progress bar and live
 status messages, the pipeline:
 
-1. **Fetches** — GLSEA daily SST for the spec's bbox (30-day stride)
-   plus the lake-average temperature series, both with provenance
-   (source URL, SHA-256, retrieval time). Fetchable today: the 5 Great
-   Lakes, variable `sst` only.
-2. **Renders** — survey-viz renders one 1080×1920 PNG per month
-   (title block, map panel with fixed colormap, burned-in timestamp,
-   time-series panel with a playhead).
+1. **Fetches** — the spec's variable for the spec's bbox (30-day stride
+   for daily sources) plus a context series where the adapter provides
+   one, both with provenance (source URL, SHA-256, retrieval time).
+   Fetchable regions/variables are whatever the installed survey-viz +
+   survey-currents support (13 sources as of survey-viz 0.15.0 /
+   survey-currents 0.15.2).
+2. **Renders** — survey-viz renders one 1080×1920 PNG per frame
+   (title block, map panel, burned-in timestamp, time-series panel
+   with a playhead) using the aesthetics from step 2.
 3. **Encodes** — survey-animate encodes the frames to `reel.mp4`
    (H.264, 30 fps, `reel` preset) with a title card and a
    `.provenance.json` sidecar.
 
-If the region isn't fetchable (e.g. Gulf of Mexico) or the variable
-isn't supported (e.g. `currents`), you get an **honest message naming
-what's missing** — the app never crashes on these paths.
+If the region isn't fetchable or the variable isn't supported, you get
+an **honest message naming what's missing** — the app never crashes
+on these paths.
 
-### Step 3 — Take the reel
+### Step 4 — Take the reel
 
 * Embedded video player (`st.video`)
 * **Download MP4** button

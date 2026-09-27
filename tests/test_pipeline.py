@@ -252,3 +252,49 @@ def test_progress_optional(tmp_path):
     result = pipeline.run_pipeline(FakeSpec(), fake_peers, str(tmp_path),
                                    progress=None)
     assert result.n_frames == 2
+
+
+# --- cmap passthrough (v0.2.0) --------------------------------------------------
+
+def _cmap_recording_peers(seen):
+    """Peers whose render_viz records kwargs; everything else delegates."""
+    calls = []
+    peers, _, _ = make_fake_peers(calls)
+
+    def render_viz(spec, field, series, out_dir, **kwargs):
+        seen.update(kwargs)
+        return peers.render_viz(spec, field, series, out_dir)
+
+    return types.SimpleNamespace(
+        is_fetchable=peers.is_fetchable,
+        fetch_sst=peers.fetch_sst,
+        fetch_averages=peers.fetch_averages,
+        render_viz=render_viz,
+        render_video=peers.render_video,
+        glsea_bounds=peers.glsea_bounds,
+    )
+
+
+def test_cmap_passed_through_to_render_viz(tmp_path):
+    seen = {}
+    peers = _cmap_recording_peers(seen)
+    pipeline.run_pipeline(FakeSpec(), peers, str(tmp_path), cmap="inferno")
+    assert seen.get("cmap") == "inferno"
+
+
+def test_cmap_none_never_passed_to_peer(tmp_path):
+    """cmap=None must not reach the peer: legacy survey-viz (< 0.15.0)
+    peers whose render_viz lacks the kwarg keep working."""
+    seen = {}
+    peers = _cmap_recording_peers(seen)
+    pipeline.run_pipeline(FakeSpec(), peers, str(tmp_path), cmap=None)
+    assert "cmap" not in seen
+
+
+def test_legacy_render_viz_signature_still_works(tmp_path):
+    """A strict old-signature fake (no **kwargs) proves the pipeline
+    does not pass cmap unless one was requested."""
+    calls = []
+    fake_peers, _, _ = make_fake_peers(calls)
+    result = pipeline.run_pipeline(FakeSpec(), fake_peers, str(tmp_path))
+    assert result.n_frames == 2
