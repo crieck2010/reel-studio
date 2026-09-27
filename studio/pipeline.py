@@ -91,18 +91,28 @@ STORM_VARIABLES = ("storm-tracks",)
 #: water storage anomalies via ``currents.grace``, survey-currents >=
 #: 0.12.0, survey-viz >= 0.11.0). Fetchable in any region — the CSR
 #: mascon archive is global and land-only (oceans masked).
-#: ``streamflow`` and ``sea-level`` are deliberately NOT in this list:
-#: they parse (survey-viz >= 0.11.0) but have no fetch adapter —
-#: river discharge has no adapter yet (streamgages are item 11 of the
-#: remote-sensing program), and sea level is satellite altimetry, a
-#: different observable from GRACE terrestrial water storage —
-#: plan_fetch refuses them honestly, never answering with a GRACE map.
+#: ``sea-level`` is deliberately NOT in this list: it parses
+#: (survey-viz >= 0.11.0) but has no fetch adapter, because sea level
+#: is satellite altimetry, a different observable from GRACE
+#: terrestrial water storage — plan_fetch refuses it honestly, never
+#: answering with a GRACE map. ``streamflow`` lives in
+#: ``USGS_VARIABLES`` below (survey-viz >= 0.12.0, survey-currents >=
+#: 0.13.0).
 GRACE_VARIABLES = ("water-storage",)
+
+#: The streamflow variable (USGS Water Services NWIS streamgage daily
+#: values via ``currents.streamgages``, survey-currents >= 0.13.0,
+#: survey-viz >= 0.12.0). Routable from any region — NWIS coverage is
+#: US-only, so a bbox outside USGS coverage returns an honest empty
+#: field (the renderer draws an explicit no-gages message, never
+#: fabricated data).
+USGS_VARIABLES = ("streamflow",)
 
 #: Variables with a fetch adapter: SST + the ERA5 atmosphere set +
 #: currents + active fires + sea ice + night lights + GEBCO topography
-#: + IBTrACS storm tracks.
-SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES + FIRE_VARIABLES + ICE_VARIABLES + NIGHT_VARIABLES + GEBCO_VARIABLES + STORM_VARIABLES + GRACE_VARIABLES + ("streamflow", "sea-level")
+#: + IBTrACS storm tracks + GRACE water storage + USGS streamflow.
+#: ``sea-level`` parses but has no fetch adapter (honest refusal).
+SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES + FIRE_VARIABLES + ICE_VARIABLES + NIGHT_VARIABLES + GEBCO_VARIABLES + STORM_VARIABLES + GRACE_VARIABLES + USGS_VARIABLES + ("sea-level",)
 
 #: Region keys of the 5 Great Lakes (currents have no adapter there).
 GREAT_LAKES_KEYS = frozenset(FETCHABLE_REGION_TO_LAKE)
@@ -122,6 +132,7 @@ SOURCE_LABELS = {
     "gebco": "GEBCO 2024",
     "ibtracs": "NOAA IBTrACS v04r01",
     "grace": "CSR GRACE/GRACE-FO RL06.3",
+    "usgs": "USGS Water Services (NWIS)",
 }
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
@@ -343,23 +354,36 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             variable=variable,
             source="grace",
         )
-    # River discharge / streamflow (survey-viz >= 0.11.0) and sea level
-    # (survey-viz >= 0.11.0) are refused honestly here: no adapter
-    # exists for either, so they are never answered with a GRACE map.
-    if variable == "streamflow":
+    # USGS streamgage daily values (survey-viz >= 0.12.0,
+    # survey-currents >= 0.13.0): routable from ANY region — NWIS
+    # coverage is US-only, so a bbox outside USGS coverage returns an
+    # honest empty field (rendered as an explicit no-gages message,
+    # never fabricated data), not a fetch failure.
+    if source == "usgs":
+        if variable != "streamflow":
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Source 'usgs' only serves the 'streamflow' "
+                    f"variable; got variable '{variable}'."
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
         return FetchPlan(
-            fetchable=False,
+            fetchable=True,
             reason=(
-                "River discharge / streamflow ('streamflow') has no fetch "
-                "adapter yet: USGS streamgages are item 11 of the "
-                "remote-sensing program. The description parsed fine; "
-                "asking for 'water storage' or 'groundwater' routes to "
-                "CSR GRACE/GRACE-FO instead."
+                f"Region '{region_key}' is routable via "
+                f"{SOURCE_LABELS['usgs']} (variable '{variable}', "
+                "source 'usgs')."
             ),
             region_key=region_key,
             variable=variable,
-            kind="no_adapter",
+            source="usgs",
         )
+    # Sea level (survey-viz >= 0.11.0) is refused honestly here: no
+    # adapter exists, so it is never answered with a GRACE map.
     if variable == "sea-level":
         return FetchPlan(
             fetchable=False,
@@ -1033,6 +1057,56 @@ def _fetch_water_context(peers: Any, overlays: List[str],
     }}
 
 
+def _fetch_streamflow_context(peers: Any, overlays: List[str],
+                              spec: Any,
+                              stride_days: int) -> Dict[str, Dict[str, Any]]:
+    """Fetch precipitation context for a streamflow render; ``{}`` on failure.
+
+    The streamflow renderer draws an optional ``"tp"`` precipitation
+    contour overlay (``"… with rainfall"`` / ``"Flooding after heavy
+    rainfall"`` descriptions) *under* the gage markers. IMERG
+    (observed, survey-currents >= 0.8.0) is preferred; ERA5
+    (survey-currents >= 0.4.0) is the fallback. Context is best-effort:
+    a missing peer, missing credentials, or a failed download degrades
+    gracefully — the renderer records the requested overlay as
+    ``"absent"`` in the manifest instead of failing the reel.
+
+    Daily grids: one frame per day of the spec window. IMERG's
+    ``accumulate="daily", run="late"`` product already yields daily
+    totals; the ERA5 fallback reuses :func:`_fetch_storm_context` with
+    daily 12:00 UTC snapshots (the viz overlay rule draws the nearest
+    timestep at/below each frame date, so one snapshot per day is
+    enough).
+    """
+    names = [str(o).strip().lower() for o in overlays]
+    if "tp" not in names:
+        return {}
+    imerg_fn = getattr(peers, "fetch_imerg", None)
+    if imerg_fn is not None:
+        try:
+            rain = imerg_fn(tuple(spec.bbox), spec.start, spec.end,
+                            accumulate="daily", run="late",
+                            stride_days=stride_days)
+        except Exception:
+            rain = None
+        if rain is not None:
+            try:
+                times = [_time_to_date_str(t) for t in getattr(rain, "times", [])]
+                grid = np.ma.filled(
+                    np.ma.asarray(getattr(rain, "values"), dtype=float),
+                    np.nan)
+                return {"tp": {
+                    "times": times,
+                    "lats": np.asarray(getattr(rain, "lats", []), dtype=float),
+                    "lons": np.asarray(getattr(rain, "lons", []), dtype=float),
+                    "grid": grid,
+                }}
+            except Exception:
+                pass
+    # ERA5 fallback (daily 12:00 UTC snapshots).
+    return _fetch_storm_context(peers, ["tp"], spec, 24)
+
+
 def _series_to_dict(series: Any) -> Optional[Dict[str, Any]]:
     """Adapt a survey-currents LakeSeries to survey-viz's duck-typed series.
 
@@ -1454,6 +1528,52 @@ def run_pipeline(
                 render_dict["overlay_grids"] = context
         series = None
         fetch_key = "grace"
+    elif source == "usgs":
+        # USGS Water Services NWIS streamgage daily values:
+        # fetch_usgs(bbox, start, end) on the spec bbox directly — NWIS
+        # is keyless HTTPS, nothing to clamp (US-only coverage; a bbox
+        # outside USGS coverage returns an honest empty field, which
+        # survey-viz >= 0.12.0 renders as an explicit no-gages message,
+        # never fabricated data). series=None: there is no lake-average
+        # equivalent; render_viz draws the hydrograph panel from the
+        # GageField itself. The GageField goes to render_viz as its
+        # to_dict() form (never through _field_to_dict, which only
+        # understands scalar 3-D grids): survey-viz draws gage markers
+        # + a hydrograph from the "gage_records" key. A requested
+        # "tp" precipitation overlay ("… with rainfall" / "Flooding
+        # after heavy rainfall") is fetched as best-effort context —
+        # IMERG observed first, ERA5 fallback — and attached as
+        # overlay_grids dicts; an unavailable context degrades
+        # gracefully (the renderer records "absent" per overlay).
+        label = SOURCE_LABELS[source]
+        report(0.05, f"Fetching {label} streamgage daily values…")
+        fetch_fn = getattr(peers, "fetch_usgs", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                "Source 'usgs' needs survey-currents>=0.13.0 with the "
+                "USGS streamgage adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        try:
+            field = fetch_fn(tuple(spec.bbox), spec.start, spec.end)
+        except Exception as exc:
+            raise RuntimeError(
+                f"USGS streamgage fetch failed ({type(exc).__name__}: {exc}). "
+                "Check the network connection. The NWIS water services are "
+                "keyless HTTPS (no account needed), so this is usually a "
+                "connectivity or date-range issue."
+            ) from exc
+        render_dict = (field.to_dict() if hasattr(field, "to_dict")
+                       else field)
+        overlays = [str(o) for o in (getattr(spec, "overlays", None) or ())]
+        if overlays and isinstance(render_dict, dict):
+            context = _fetch_streamflow_context(peers, overlays, spec,
+                                                stride_days)
+            if context:
+                render_dict = dict(render_dict)
+                render_dict["overlay_grids"] = context
+        series = None
+        fetch_key = "usgs"
     else:
         # Global SST (OISST/MUR): fetch on the spec bbox directly — the
         # global grids have no lake bounds to clamp to — and render with
@@ -1516,7 +1636,7 @@ def run_pipeline(
             # for active fires, "nsidc" for sea ice, "imerg" for
             # precipitation, "blackmarble" for night lights, "gebco" for
             # topography, "ibtracs" for storm tracks, "grace" for
-            # terrestrial water storage (the field
+            # terrestrial water storage, "usgs" for streamgages (the field
             # provenance carries the source-specific payload).
             fetch_key: dict(getattr(field, "provenance", {}) or {}),
             "averages": dict(getattr(series, "provenance", {}) or {}),

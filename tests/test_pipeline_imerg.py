@@ -233,7 +233,7 @@ def _fake_import_imerg(name, *a, **k):
                 "currents.currents_global", "currents.fires",
                 "currents.sea_ice",
                 "currents.blackmarble", "currents.basemaps", "currents.storms",
-                "currents.grace"):
+                "currents.grace", "currents.streamgages"):
         raise ImportError(f"No module named {name!r} (simulated old peer)")
     import importlib
     return importlib.import_module(name, *a, **k)

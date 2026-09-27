@@ -101,9 +101,8 @@ four lakes' bboxes already fit the grid.
   `power-outage` stays an honest refusal (change detection, not a
   single-epoch map). `country-borders` stays an honest refusal too
   (Natural Earth vectors are a cartographic underlay, not a data
-  variable). `streamflow` and `sea-level` stay honest refusals as well
-  (no adapter yet for river discharge; sea level is altimetry, not a
-  GRACE map).
+  variable). `sea-level` stays an honest refusal as well (sea level
+  is altimetry, not a GRACE map).
 * Anything else → `plan_fetch` returns `fetchable=False` with a message
   naming the missing adapter; `run_pipeline` raises
   `UnfetchableRegionError` / `UnsupportedVariableError`; the app shows
@@ -289,10 +288,9 @@ four lakes' bboxes already fit the grid.
 * `plan_fetch` routes `grace` (the source comes from
   `viz.sources.resolve_source` on survey-viz >= 0.11.0: any region,
   `variable="water-storage"` always pins `grace`). A `grace` pin on
-  any other variable is refused as `bad_variable`; `streamflow`
-  ("river discharge", no adapter yet) and `sea-level` (satellite
-  altimetry, not terrestrial water storage) are refused honestly as
-  `no_adapter` — never answered with a GRACE map.
+  any other variable is refused as `bad_variable`; `sea-level`
+  (satellite altimetry, not terrestrial water storage) is refused
+  honestly as `no_adapter` — never answered with a GRACE map.
 * `run_pipeline` calls
   `fetch_grace(bbox, start, end)` — the keyless CSR RL06.3 NetCDF
   (2002–present, 0.25° output grid) plus the separate land mask are
@@ -316,6 +314,36 @@ four lakes' bboxes already fit the grid.
   overlay is best-effort: a missing peer, missing CDS credentials, or
   a failed download degrades gracefully (the renderer records
   `"absent"` in the manifest) instead of failing the reel.
+
+## USGS streamflow contract (survey-viz 0.12.0 / survey-currents 0.13.0)
+
+* `wire_peers` exposes `fetch_usgs` (None when survey-currents <
+  0.13.0 — the pipeline then raises the honest upgrade message).
+* `plan_fetch` routes `usgs` (the source comes from
+  `viz.sources.resolve_source` on survey-viz >= 0.12.0: any region,
+  `variable="streamflow"` always pins `usgs`). A `usgs` pin on
+  any other variable is refused as `bad_variable`. NWIS coverage is
+  US-only, so a bbox outside USGS coverage returns an honest empty
+  field — survey-viz >= 0.12.0 renders an explicit no-gages message,
+  never fabricated data.
+* `run_pipeline` calls `fetch_usgs(bbox, start, end)` — the keyless
+  NWIS water services (site inventory + daily values JSON), cached
+  7 days with SHA-256 verification in survey-currents.
+* The `GageField` goes to `render_viz` as its `to_dict()` form
+  (`"gage_records"` key: gage markers + hydrograph panel) — **never**
+  through `_field_to_dict`, which only understands scalar 3-D grids.
+  Provenance rides on the field object (`fetch["usgs"]`: NWIS URLs,
+  retrieval time, parameters, site counts, cache state);
+  `series=None`.
+* A requested `"tp"` precipitation overlay ("… with rainfall" /
+  "Flooding after heavy rainfall") is fetched by
+  `_fetch_streamflow_context`: `fetch_imerg(bbox, start, end,
+  accumulate="daily", run="late", stride_days=...)` is preferred
+  (observed), with `fetch_era5(["tp"], …)` as the fallback —
+  survey-viz >= 0.12.0 draws the contours under the gage markers.
+  Best-effort: a missing peer, missing credentials, or a failed
+  download degrades gracefully (the renderer records `"absent"` in
+  the manifest) instead of failing the reel.
 
 ## ERA5 contract (survey-viz 0.3.0 / survey-currents 0.4.0)
 

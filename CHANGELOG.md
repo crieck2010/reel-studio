@@ -5,6 +5,21 @@ All notable changes to reel-studio. Format follows [Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- USGS streamflow flow-through (needs survey-viz 0.12.0 +
+  survey-currents 0.13.0): `plan_fetch` routes source `"usgs"` as
+  routable in any region for `variable="streamflow"` (a `usgs` pin on
+  any other variable is refused as `bad_variable`); `sea-level` stays
+  an honest `no_adapter` refusal (satellite altimetry, not GRACE).
+  `run_pipeline` calls `fetch_usgs(bbox, start, end)` on the spec bbox
+  directly and hands the `GageField` to `render_viz` as its
+  `to_dict()` form — never through `_field_to_dict`. A requested
+  `"tp"` precipitation overlay is fetched via `_fetch_streamflow_context`
+  (IMERG observed daily totals preferred, ERA5 fallback) and attached
+  as `overlay_grids` dicts; an unavailable context degrades gracefully
+  (the renderer records `"absent"` per overlay). Provenance under
+  `fetch["usgs"]`, `series=None`. `wire_peers` exposes `fetch_usgs`
+  lazily (honest upgrade message naming `survey-currents>=0.13.0` on
+  older peers). Documented in `docs/INTEROP.md`.
 - IBTrACS storm-tracks flow-through (needs survey-viz 0.10.0 +
   survey-currents 0.11.0): `plan_fetch` routes source `"ibtracs"` as
   fetchable in any region for `variable="storm-tracks"` (an `ibtracs`

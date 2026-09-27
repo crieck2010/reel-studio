@@ -1,17 +1,20 @@
-"""GRACE water-storage flow-through (no network, no peers needed).
+"""GRACE water-storage + USGS streamflow flow-through (no network, no peers needed).
 
 Covers: plan_fetch routing for source "grace" (fetchable in any region,
 variable "water-storage" only — other variables are bad_variable),
-honest refusals for "streamflow" and "sea-level" (never answered with a
-GRACE map), the run_pipeline grace branch
-(fetch_grace(bbox, start, end), series=None, provenance under
-fetch["grace"]), the WaterField going to render_viz as its to_dict()
-form (never through _field_to_dict), the ERA5 precipitation context
-("… vs rainfall" -> overlay_grids dict, bilinearly resampled onto the
-GRACE grid; failed/unavailable context degrades gracefully), the
-missing-adapter upgrade message (survey-currents>=0.12.0),
+plan_fetch routing for source "usgs" (fetchable in any region, variable
+"streamflow" only — other variables are bad_variable), the honest
+refusal for "sea-level" (never answered with a GRACE map), the
+run_pipeline grace branch (fetch_grace(bbox, start, end), series=None,
+provenance under fetch["grace"]), the run_pipeline usgs branch
+(fetch_usgs(bbox, start, end), series=None, provenance under
+fetch["usgs"]), the GageField going to render_viz as its to_dict()
+form (never through _field_to_dict), the best-effort precipitation
+context for streamflow (IMERG preferred, ERA5 fallback; failed /
+unavailable context degrades gracefully), the missing-adapter upgrade
+messages (survey-currents>=0.12.0 for grace, >=0.13.0 for usgs),
 fetch-failure wrapping, the SOURCE_LABELS registry, and wire_peers
-exposing fetch_grace.
+exposing fetch_grace/fetch_usgs.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from studio import peers, pipeline
 from studio.pipeline import (
     UnfetchableRegionError,
     _bilinear_resample,
+    _fetch_streamflow_context,
     _fetch_water_context,
     plan_fetch,
     run_pipeline,
@@ -206,13 +210,20 @@ def test_plan_fetch_grace_bad_variable():
     assert "water-storage" in plan.reason
 
 
-def test_plan_fetch_streamflow_refused_honestly():
+def test_plan_fetch_streamflow_routes_to_usgs():
     plan = plan_fetch(FakeWaterSpec(variable="streamflow"),
-                      lambda key: False, lambda s: "")
+                      lambda key: False, lambda s: "usgs")
+    assert plan.fetchable is True
+    assert plan.source == "usgs"
+    assert "USGS" in plan.reason
+
+
+def test_plan_fetch_usgs_bad_variable():
+    plan = plan_fetch(FakeWaterSpec(variable="sst"),
+                      lambda key: False, lambda s: "usgs")
     assert plan.fetchable is False
-    assert plan.kind == "no_adapter"
-    assert "streamflow" in plan.reason.lower()
-    assert "GRACE" in plan.reason  # names the water-storage alternative
+    assert plan.kind == "bad_variable"
+    assert "streamflow" in plan.reason
 
 
 def test_plan_fetch_sea_level_refused_honestly():
@@ -368,8 +379,11 @@ def test_supported_variables_and_source_labels():
     assert "water-storage" in pipeline.SUPPORTED_VARIABLES
     assert "streamflow" in pipeline.SUPPORTED_VARIABLES
     assert "sea-level" in pipeline.SUPPORTED_VARIABLES
+    assert "streamflow" in pipeline.USGS_VARIABLES
     assert "grace" in pipeline.SOURCE_LABELS
     assert "GRACE" in pipeline.SOURCE_LABELS["grace"]
+    assert "usgs" in pipeline.SOURCE_LABELS
+    assert "USGS" in pipeline.SOURCE_LABELS["usgs"]
 
 
 def _stub_module(name, **attrs):
@@ -409,3 +423,241 @@ def test_wire_peers_exposes_fetch_grace(monkeypatch):
     assert statuses["survey-currents"].installed is True
     ns = peers.wire_peers(statuses)
     assert callable(ns.fetch_grace)
+
+
+# --- USGS streamflow flow-through ----------------------------------------------
+
+
+class FakeGageField:
+    """GageField-shaped: to_dict + provenance."""
+
+    def __init__(self):
+        self.provenance = {
+            "source": "usgs",
+            "n_sites_with_data": 2,
+            "units": "native",
+        }
+
+    def to_dict(self):
+        return {
+            "gage_records": [
+                {
+                    "site_no": "04159130",
+                    "site_name": "RIVER AT GAGE 1",
+                    "lat": 42.1,
+                    "lon": -83.28,
+                    "series": {
+                        "00060": {
+                            "dates": ["2016-01-01", "2016-01-02"],
+                            "values": [100.0, 110.0],
+                            "unit": "ft3/s",
+                        }
+                    },
+                }
+            ],
+            "bbox": [-124.0, 32.0, -114.0, 42.0],
+            "start": "2016-01-01",
+            "end": "2016-01-02",
+            "parameters": ["00060"],
+            "units": "native",
+            "source": "usgs",
+            "provenance": dict(self.provenance),
+        }
+
+
+class FakeRain:
+    """RainField-shaped for the IMERG tp context."""
+
+    def __init__(self):
+        self.times = [dt.datetime(2016, 1, 1, 12),
+                      dt.datetime(2016, 1, 2, 12)]
+        self.lats = np.array([32.0, 42.0])
+        self.lons = np.array([-124.0, -114.0])
+        self.values = np.full((2, 2, 2), 3.5)  # mm/day daily totals
+
+
+class FakeFlowSpec(FakeWaterSpec):
+    def __init__(self, overlays=()):
+        super().__init__(variable="streamflow", overlays=overlays)
+        self.title = "California — Streamflow"
+
+
+def make_usgs_peers(calls, with_fetch=True, with_imerg=True,
+                    imerg_fails=False, with_era5=True, era5_fails=False):
+    seen = {}
+
+    def _guard(name):
+        def deco(fn):
+            def wrapper(*a, **k):
+                calls.append(name)
+                if (name == "fetch_imerg" and imerg_fails) or \
+                   (name == "fetch_era5" and era5_fails):
+                    raise ConnectionError(f"simulated {name} failure")
+                return fn(*a, **k)
+            return wrapper
+        return deco
+
+    @_guard("is_fetchable")
+    def is_fetchable(key):
+        return False  # region check must NOT gate usgs (source routing does)
+
+    @_guard("resolve_source")
+    def resolve_source(spec):
+        return "usgs" if spec.variable == "streamflow" else ""
+
+    ns = {"is_fetchable": is_fetchable, "resolve_source": resolve_source}
+
+    if with_fetch:
+        @_guard("fetch_usgs")
+        def fetch_usgs(bbox, start, end, **kwargs):
+            seen["bbox"] = tuple(bbox)
+            seen["start"], seen["end"] = start, end
+            return FakeGageField()
+        ns["fetch_usgs"] = fetch_usgs
+
+    if with_imerg:
+        @_guard("fetch_imerg")
+        def fetch_imerg(bbox, start, end, **kwargs):
+            seen["imerg_kwargs"] = kwargs
+            return FakeRain()
+        ns["fetch_imerg"] = fetch_imerg
+
+    if with_era5:
+        @_guard("fetch_era5")
+        def fetch_era5(variables, bbox, start, end, stride_hours=24):
+            seen["era5_variables"] = list(variables)
+            return FakeAtmo()
+        ns["fetch_era5"] = fetch_era5
+
+    @_guard("render_viz")
+    def render_viz(spec, field, series, out_dir):
+        seen["render_field"] = field
+        seen["render_series"] = series
+        # The streamflow renderer contract: a GageField dict with the
+        # "gage_records" key, NOT a scalar-grid dict.
+        assert isinstance(field, dict)
+        assert "gage_records" in field
+        os.makedirs(out_dir, exist_ok=True)
+        p = os.path.join(out_dir, "frame_0001.png")
+        with open(p, "wb") as fh:
+            fh.write(b"\x89PNG\r\n\x1a\n")
+        manifest = os.path.join(out_dir, "manifest.json")
+        with open(manifest, "w") as fh:
+            fh.write("{}")
+        return [p], manifest
+
+    @_guard("render_video")
+    def render_video(source, out_path, preset="reel", **kwargs):
+        assert preset == "reel"
+        with open(out_path, "wb") as fh:
+            fh.write(b"FAKEMP4")
+        return types.SimpleNamespace(video_path=out_path,
+                                     sidecar_path=out_path + ".provenance.json",
+                                     fps=30, n_frames=1)
+
+    ns.update({"render_viz": render_viz, "render_video": render_video})
+    return types.SimpleNamespace(**ns), seen
+
+
+def test_run_pipeline_usgs_fetch_and_render(tmp_path):
+    calls, seen = [], {}
+    peers_ns, seen = make_usgs_peers(calls)
+    out = run_pipeline(FakeFlowSpec(), peers_ns,
+                       out_dir=str(tmp_path / "reel"))
+    assert "fetch_usgs" in calls
+    assert seen["bbox"] == tuple(FakeFlowSpec().bbox)
+    # Provenance travels under fetch["usgs"].
+    assert out.provenance["fetch"]["usgs"]["source"] == "usgs"
+    assert "overlay_grids" not in seen["render_field"]
+    assert seen["render_series"] is None
+
+
+def test_run_pipeline_usgs_missing_adapter():
+    peers_ns, _ = make_usgs_peers([], with_fetch=False)
+    with pytest.raises(UnfetchableRegionError) as excinfo:
+        run_pipeline(FakeFlowSpec(), peers_ns, out_dir="/tmp/x-usgs-nope")
+    assert "survey-currents>=0.13.0" in str(excinfo.value)
+
+
+def test_run_pipeline_usgs_fetch_failure_wrapped(tmp_path):
+    def bad_usgs(*a, **k):
+        raise ConnectionError("simulated NWIS outage")
+    peers_ns, seen = make_usgs_peers([])
+    peers_ns.fetch_usgs = bad_usgs
+    with pytest.raises(RuntimeError) as excinfo:
+        run_pipeline(FakeFlowSpec(), peers_ns,
+                     out_dir=str(tmp_path / "reel"))
+    assert "keyless HTTPS" in str(excinfo.value)
+
+
+def test_run_pipeline_usgs_tp_prefers_imerg(tmp_path):
+    peers_ns, seen = make_usgs_peers([])
+    run_pipeline(FakeFlowSpec(overlays=("tp",)), peers_ns,
+                 out_dir=str(tmp_path / "reel"))
+    assert seen["imerg_kwargs"]["accumulate"] == "daily"
+    assert seen["imerg_kwargs"]["run"] == "late"
+    context = seen["render_field"]["overlay_grids"]
+    tp = context["tp"]
+    assert np.shape(tp["grid"]) == (2, 2, 2)
+    assert tp["grid"][0, 0, 0] == pytest.approx(3.5)
+
+
+def test_run_pipeline_usgs_tp_imerg_failure_falls_back_to_era5(tmp_path):
+    peers_ns, seen = make_usgs_peers([], imerg_fails=True)
+    run_pipeline(FakeFlowSpec(overlays=("tp",)), peers_ns,
+                 out_dir=str(tmp_path / "reel"))
+    assert seen["era5_variables"] == ["tp"]
+    context = seen["render_field"]["overlay_grids"]
+    assert "tp" in context
+
+
+def test_run_pipeline_usgs_tp_all_context_fails_still_renders(tmp_path):
+    peers_ns, seen = make_usgs_peers([], imerg_fails=True, era5_fails=True)
+    run_pipeline(FakeFlowSpec(overlays=("tp",)), peers_ns,
+                 out_dir=str(tmp_path / "reel"))  # no raise
+    assert "overlay_grids" not in seen["render_field"]  # graceful
+
+
+def test_run_pipeline_usgs_context_without_peers(tmp_path):
+    peers_ns, seen = make_usgs_peers([], with_imerg=False, with_era5=False)
+    run_pipeline(FakeFlowSpec(overlays=("tp",)), peers_ns,
+                 out_dir=str(tmp_path / "reel"))  # no raise
+    assert "overlay_grids" not in seen["render_field"]  # graceful
+
+
+def test_fetch_streamflow_context_requires_tp():
+    peers_ns, _ = make_usgs_peers([])
+    assert _fetch_streamflow_context(peers_ns, ["wind"],
+                                     FakeFlowSpec(), 30) == {}
+
+
+def test_wire_peers_exposes_fetch_usgs(monkeypatch):
+    viz = _stub_module(
+        "viz",
+        parse_description=lambda *a, **k: None,
+        UnparseableDescription=type("UnparseableDescription", (Exception,), {}),
+        VizSpec=type("VizSpec", (), {}),
+        is_fetchable=lambda key: False,
+        get_region=lambda key: None,
+        render_viz=lambda *a, **k: ([], ""),
+    )
+    glsea = _stub_module(
+        "currents.glsea",
+        fetch_glsea_sst=lambda *a, **k: None,
+        fetch_glsea_lake_averages=lambda *a, **k: None,
+        GLSEA_LON_MIN=-92.0, GLSEA_LAT_MIN=41.0,
+        GLSEA_LON_MAX=-76.0, GLSEA_LAT_MAX=49.0,
+    )
+    currents = _stub_module("currents", glsea=glsea)
+    streamgages = _stub_module("currents.streamgages",
+                               fetch_usgs=lambda *a, **k: None)
+    animate = _stub_module("animate", render_video=lambda *a, **k: None)
+    for name, mod in (("viz", viz), ("currents", currents),
+                      ("currents.glsea", glsea),
+                      ("currents.streamgages", streamgages),
+                      ("animate", animate)):
+        monkeypatch.setitem(sys.modules, name, mod)
+    statuses = peers.load_peers()
+    assert statuses["survey-currents"].installed is True
+    ns = peers.wire_peers(statuses)
+    assert callable(ns.fetch_usgs)
