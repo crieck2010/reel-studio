@@ -76,14 +76,40 @@ four lakes' bboxes already fit the grid.
 * **Regions:** the 5 Great Lakes (`lake-superior`, `lake-michigan`,
   `lake-huron`, `lake-erie`, `lake-ontario`) for SST via GLSEA
   (`viz.is_fetchable`); any region for SST via OISST/MUR (global grids);
-  **any region** for the ERA5 atmosphere variables (global 0.25° grid).
+  **any region** for the ERA5 atmosphere variables (global 0.25° grid);
+  **any non-Great-Lakes region** for surface currents via OSCAR
+  v2.0 / CMEMS global physics (global grids).
 * **Variables:** `sst` (GLSEA/OISST/MUR), `wind` / `msl` / `t2m` / `tp`
   (ERA5 via the CDS API — needs `survey-currents>=0.4.0`, `cdsapi`,
-  `netCDF4`, and a free CDS account).
+  `netCDF4`, and a free CDS account), `currents` (OSCAR v2.0 — needs
+  `survey-currents>=0.5.0`, `netCDF4`, and a free Earthdata Login — or
+  CMEMS global physics — needs `survey-currents>=0.5.0`, the
+  `copernicusmarine` toolbox, and a free CMEMS account). Great Lakes
+  `currents` stays an honest refusal (no lake-scale current adapter).
 * Anything else → `plan_fetch` returns `fetchable=False` with a message
   naming the missing adapter; `run_pipeline` raises
   `UnfetchableRegionError` / `UnsupportedVariableError`; the app shows
   the message instead of crashing.
+
+## Currents contract (survey-viz 0.4.0 / survey-currents 0.5.0)
+
+* `wire_peers` exposes `fetch_oscar` and `fetch_cmems_currents` lazily
+  (None when survey-currents < 0.5.0 — the pipeline then raises the
+  honest upgrade message naming `survey-currents>=0.5.0`).
+* `run_pipeline` calls `fetch(bbox, start, end, stride_days=...)` with
+  `series=None` (no lake-average equivalent; the chart panel shows a
+  placeholder). Provenance keys are `fetch["oscar"]` or
+  `fetch["cmems-currents"]`.
+* `plan_fetch` routes `oscar`/`cmems-currents` (the source comes from
+  `viz.sources.resolve_source` on survey-viz >= 0.4.0: non-Great-Lakes
+  `currents` → `oscar`; high-resolution/ultra/1-km currents wording pins
+  `cmems-currents`).
+* `_field_to_dict` adapts a survey-currents `CurrentField` by computing
+  the scalar current speed `sqrt(u^2+v^2)` (masked cells → NaN) — no
+  quiver/streamline/particle rendering here; that is survey-flow's job.
+* **Deferred:** a Gulf Stream `currents + SST base` particle-flow overlay
+  — current overlay plumbing is contour-only (see survey-viz CHANGELOG
+  0.4.0).
 
 ## ERA5 contract (survey-viz 0.3.0 / survey-currents 0.4.0)
 

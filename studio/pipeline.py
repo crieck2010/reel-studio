@@ -36,8 +36,18 @@ SST_VARIABLE = "sst"
 #: any region — the 0.25° grid is global.
 ERA5_VARIABLES = ("wind", "msl", "t2m", "tp")
 
-#: Variables with a fetch adapter: SST + the ERA5 atmosphere set.
-SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES
+#: The currents variable (OSCAR v2.0 via ``currents.currents_global``,
+#: survey-currents >= 0.5.0). Fetchable in any region EXCEPT the
+#: 5 Great Lakes (no lake-scale current adapter exists — that stays an
+#: honest refusal).
+CURRENTS_VARIABLES = ("currents",)
+
+#: Variables with a fetch adapter: SST + the ERA5 atmosphere set +
+#: currents.
+SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES
+
+#: Region keys of the 5 Great Lakes (currents have no adapter there).
+GREAT_LAKES_KEYS = frozenset(FETCHABLE_REGION_TO_LAKE)
 
 #: Source names the pipeline knows how to fetch (see viz.sources).
 SOURCE_LABELS = {
@@ -45,6 +55,8 @@ SOURCE_LABELS = {
     "oisst": "NOAA OISST v2.1",
     "mur": "NASA JPL MUR v4.1",
     "era5": "Copernicus ERA5 (CDS)",
+    "oscar": "NASA PODAAC OSCAR v2.0",
+    "cmems-currents": "CMEMS Global Ocean Physics (daily)",
 }
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
@@ -77,7 +89,8 @@ class FetchPlan:
     #: "ok" | "no_adapter" (region not fetchable) | "bad_variable"
     kind: str = "ok"
     #: which adapter the fetch uses:
-    #: "glsea" | "oisst" | "mur" | "era5" ("ok" plans only)
+    #: "glsea" | "oisst" | "mur" | "era5" | "oscar" | "cmems-currents"
+    #: ("ok" plans only)
     source: str = ""
 
 
@@ -105,8 +118,8 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
 
     # Source-aware routing (survey-viz >= 0.2.0): an explicitly pinned
     # source, or the regional default (Great-Lakes SST -> glsea, other
-    # SST -> oisst, wind/msl/t2m/tp -> era5), decides the adapter -- not
-    # the region key alone.
+    # SST -> oisst, wind/msl/t2m/tp -> era5, non-Great-Lakes currents ->
+    # oscar), decides the adapter -- not the region key alone.
     source = ""
     if resolve_source is not None:
         try:
@@ -116,14 +129,16 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
     if not source:
         source = str(getattr(spec, "source", "") or "").strip().lower()
     if source in ("oisst", "mur"):
-        if variable not in SUPPORTED_VARIABLES:
+        # OISST/MUR only serve SST: an explicit pin cannot redirect a
+        # currents/ERA5 request onto the SST adapters.
+        if variable != SST_VARIABLE:
             return FetchPlan(
                 fetchable=False,
                 reason=(
-                    f"Variable '{variable}' has no fetch adapter -- only 'sst' "
-                    "(surface water temperature) is supported today. The "
-                    "description parsed fine; other variables need a new "
-                    "data adapter (see docs/INTEROP.md)."
+                    f"Variable '{variable}' has no fetch adapter for source "
+                    f"'{source}' -- '{source}' serves sea-surface temperature "
+                    "only. The description parsed fine; pick a matching "
+                    "source (see docs/INTEROP.md)."
                 ),
                 region_key=region_key,
                 variable=variable,
@@ -168,6 +183,46 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             source="era5",
         )
 
+    # Global currents (survey-viz >= 0.4.0): fetchable in ANY region
+    # except the 5 Great Lakes — no lake-scale current adapter exists,
+    # so Great Lakes currents stay an honest refusal.
+    if source in ("oscar", "cmems-currents"):
+        if variable != "currents":
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Source '{source}' only serves the 'currents' variable; "
+                    f"got variable '{variable}'."
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
+        if region_key in GREAT_LAKES_KEYS:
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Region '{region_key}' has no current adapter yet -- "
+                    "OSCAR v2.0 and CMEMS global physics do not resolve the "
+                    "Great Lakes. The description parsed fine; other regions "
+                    "need no new adapter (see docs/INTEROP.md)."
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="no_adapter",
+            )
+        return FetchPlan(
+            fetchable=True,
+            reason=(
+                f"Region '{region_key}' is fetchable via "
+                f"{SOURCE_LABELS[source]} (variable '{variable}', "
+                f"source '{source}')."
+            ),
+            region_key=region_key,
+            variable=variable,
+            source=source,
+        )
+
     if not is_fetchable(region_key):
         return FetchPlan(
             fetchable=False,
@@ -182,14 +237,17 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             variable=variable,
             kind="no_adapter",
         )
-    if variable not in SUPPORTED_VARIABLES:
+    # Legacy path (survey-viz < 0.2.0, no resolve_source): only the
+    # original GLSEA SST adapter exists — currents/ERA5 requests cannot
+    # be served without source routing.
+    if variable != SST_VARIABLE:
         return FetchPlan(
             fetchable=False,
             reason=(
-                f"Variable '{variable}' has no fetch adapter -- only 'sst' "
-                "(surface water temperature) is supported today, via NOAA "
-                "GLSEA. The description parsed fine; other variables need a "
-                "new data adapter (see docs/INTEROP.md)."
+                f"Variable '{variable}' has no fetch adapter without source "
+                "routing -- upgrade survey-viz to >= 0.4.0 so "
+                "viz.sources.resolve_source can pick the right adapter "
+                "(see docs/INTEROP.md)."
             ),
             region_key=region_key,
             variable=variable,
@@ -243,7 +301,8 @@ class RunResult:
     n_frames: int
     spec: Dict[str, Any]
     lake: str
-    #: which adapter fetched the data: "glsea" | "oisst" | "mur" | "era5"
+    #: which adapter fetched the data:
+    #: "glsea" | "oisst" | "mur" | "era5" | "oscar" | "cmems-currents"
     source: str = ""
     provenance: Dict[str, Any] = field(default_factory=dict)
 
@@ -313,7 +372,11 @@ def _field_to_dict(field: Any) -> Dict[str, Any]:
     field through) so the ISO-datetime ``times`` get normalized by
     :func:`_time_to_date_str` first. ``overlay_grids`` (ERA5 contour
     overlays, e.g. isobars) are carried through under the same key —
-    dropping them would silently lose a requested overlay.
+    dropping them would silently lose a requested overlay. A
+    survey-currents ``CurrentField`` (3D ``u``/``v``) is adapted to the
+    scalar current speed ``sqrt(u^2+v^2)`` — no quiver/streamline/particle
+    rendering here; that is the survey-flow renderer's job (and it
+    matches survey-viz >= 0.4.0's own renderer).
     """
     def _overlay_dict(src: Any) -> Dict[str, Any]:
         ov = None
@@ -340,17 +403,32 @@ def _field_to_dict(field: Any) -> Dict[str, Any]:
             out["overlay_grids"] = overlays
         return out
     values = None
-    for attr in ("values", "data", "sst", "grids"):
-        arr = getattr(field, attr, None)
-        if arr is not None:
-            candidate = np.ma.asarray(arr, dtype=float)
-            if candidate.ndim == 3:
-                values = candidate
-                break
+    # CurrentField (survey-currents): scalar current speed sqrt(u^2+v^2).
+    # Masked (land/missing) cells become NaN so they stay out of the color
+    # scale and the map.
+    u = getattr(field, "u", None)
+    v = getattr(field, "v", None)
+    if u is not None and v is not None:
+        u3 = np.ma.asarray(u, dtype=float)
+        v3 = np.ma.asarray(v, dtype=float)
+        if u3.ndim == 3 and v3.ndim == 3:
+            mask = np.ma.getmaskarray(u3) | np.ma.getmaskarray(v3)
+            values = np.where(
+                mask, np.nan,
+                np.sqrt(np.ma.getdata(u3) ** 2 + np.ma.getdata(v3) ** 2))
+    if values is None:
+        for attr in ("values", "data", "sst", "grids"):
+            arr = getattr(field, attr, None)
+            if arr is not None:
+                candidate = np.ma.asarray(arr, dtype=float)
+                if candidate.ndim == 3:
+                    values = candidate
+                    break
     if values is None:
         raise TypeError(
             "field has no 3D grid data: expected a (ntime, nlat, nlon) "
-            "attribute among ('values', 'data', 'sst', 'grids')")
+            "attribute among ('values', 'data', 'sst', 'grids'), or "
+            "CurrentField-style 3D 'u'/'v'")
     out = {
         "times": [_time_to_date_str(t) for t in field.times],
         "lats": np.asarray(field.lats, dtype=float),
@@ -397,7 +475,8 @@ def run_pipeline(
         peers: namespace from :func:`studio.peers.wire_peers` (or test doubles)
             with ``is_fetchable``, ``resolve_source`` (optional),
             ``fetch_sst``, ``fetch_averages``, ``fetch_oisst``,
-            ``fetch_mur``, ``fetch_era5`` (optional), ``render_viz``,
+            ``fetch_mur``, ``fetch_era5``, ``fetch_oscar``,
+            ``fetch_cmems_currents`` (optional), ``render_viz``,
             ``render_video``.
         out_dir: working directory for frames + the MP4 (created if needed).
         progress: optional ``(fraction, message)`` callback.
@@ -483,6 +562,35 @@ def run_pipeline(
             ) from exc
         series = None
         fetch_key = "era5"
+    elif source in ("oscar", "cmems-currents"):
+        # Global currents: fetch(bbox, start, end, stride_days=...) on the
+        # spec bbox directly — the 0.25°/1/12° grids are global, nothing
+        # to clamp. series=None: there is no lake-average equivalent;
+        # render_viz shows a placeholder chart panel. _field_to_dict
+        # renders the scalar current speed sqrt(u^2+v^2).
+        label = SOURCE_LABELS[source]
+        report(0.05, f"Fetching {label} surface-current grid…")
+        fetch_fn = getattr(peers, f"fetch_{source.replace('-', '_')}", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                f"Source '{source}' needs survey-currents>=0.5.0 with the "
+                "global-currents adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        try:
+            field = fetch_fn(
+                tuple(spec.bbox), spec.start, spec.end,
+                stride_days=stride_days)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Currents fetch failed ({type(exc).__name__}: {exc}). "
+                "Check the network connection, that netCDF4 is installed "
+                "(pip install netCDF4), and that the right credentials are "
+                "configured — free Earthdata Login for OSCAR, free CMEMS "
+                "account + copernicusmarine toolbox for CMEMS."
+            ) from exc
+        series = None
+        fetch_key = source
     else:
         # Global SST (OISST/MUR): fetch on the spec bbox directly — the
         # global grids have no lake bounds to clamp to — and render with
@@ -538,8 +646,9 @@ def run_pipeline(
         "lake": lake,
         "source": source,
         "fetch": {
-            # "sst" for the SST adapters, "era5" for the atmosphere adapter
-            # (the field provenance carries the source-specific payload).
+            # "sst" for the SST adapters, "era5" for the atmosphere adapter,
+            # "oscar"/"cmems-currents" for the currents adapters (the field
+            # provenance carries the source-specific payload).
             fetch_key: dict(getattr(field, "provenance", {}) or {}),
             "averages": dict(getattr(series, "provenance", {}) or {}),
             "bbox_clamp_notes": clamp_notes,
