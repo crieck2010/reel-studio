@@ -26,7 +26,7 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
     "survey-currents": {
         "module": "currents",
         "pip": "pip install git+https://github.com/crieck2010/survey-currents.git",
-        "needed_for": "fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages), global OISST/MUR (fetch_oisst, fetch_mur), ERA5 atmosphere (fetch_era5), global currents (fetch_oscar, fetch_cmems_currents), NASA FIRMS active fires (fetch_firms), NSIDC sea-ice concentration (fetch_nsidc), GPM IMERG precipitation (fetch_imerg)",
+        "needed_for": "fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages), global OISST/MUR (fetch_oisst, fetch_mur), ERA5 atmosphere (fetch_era5), global currents (fetch_oscar, fetch_cmems_currents), NASA FIRMS active fires (fetch_firms), NSIDC sea-ice concentration (fetch_nsidc), GPM IMERG precipitation (fetch_imerg), NASA Black Marble night lights (fetch_blackmarble)",
     },
     "survey-animate": {
         "module": "animate",
@@ -137,6 +137,10 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         imerg = importlib.import_module("currents.imerg")
     except ImportError:
         imerg = None
+    try:
+        blackmarble = importlib.import_module("currents.blackmarble")
+    except ImportError:
+        blackmarble = None
 
     return types.SimpleNamespace(
         parse_description=viz.parse_description,
@@ -156,6 +160,8 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         fetch_firms=(fires.fetch_firms if fires else None),
         fetch_nsidc=(sea_ice.fetch_nsidc_sic if sea_ice else None),
         fetch_imerg=(imerg.fetch_imerg if imerg else None),
+        fetch_blackmarble=(blackmarble.fetch_blackmarble
+                           if blackmarble else None),
         # GLSEA grid bounds (lon_min, lat_min, lon_max, lat_max); the pipeline
         # clamps spec bboxes into this window before fetching, because the
         # lake-superior gazetteer bbox starts slightly west of the grid floor.

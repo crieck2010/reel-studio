@@ -85,7 +85,12 @@ four lakes' bboxes already fit the grid.
   `survey-currents>=0.5.0`, `netCDF4`, and a free Earthdata Login — or
   CMEMS global physics — needs `survey-currents>=0.5.0`, the
   `copernicusmarine` toolbox, and a free CMEMS account). Great Lakes
-  `currents` stays an honest refusal (no lake-scale current adapter).
+  `currents` stays an honest refusal (no lake-scale current adapter);
+  `night-lights` via NASA Black Marble VNP46A2 V002 in any region
+  (needs `survey-currents>=0.9.0`, `h5py` via
+  `survey-currents[blackmarble]`, and a free Earthdata Login), and
+  `power-outage` stays an honest refusal (change detection, not a
+  single-epoch map).
 * Anything else → `plan_fetch` returns `fetchable=False` with a message
   naming the missing adapter; `run_pipeline` raises
   `UnfetchableRegionError` / `UnsupportedVariableError`; the app shows
@@ -180,6 +185,34 @@ four lakes' bboxes already fit the grid.
 * `_field_to_dict` adapts a survey-currents `RainField` through the
   generic 3D-`values` path — mm/day daily totals (or mm/hr rates for
   `accumulate="native"`) with NaN for missing — zero renderer changes.
+
+## Black Marble night-lights contract (survey-viz 0.8.0 / survey-currents 0.9.0)
+
+* `wire_peers` exposes `fetch_blackmarble` lazily (None when
+  survey-currents < 0.9.0 — the pipeline then raises the honest upgrade
+  message naming `survey-currents>=0.9.0`).
+* `run_pipeline` calls `fetch_blackmarble(bbox, start, end,
+  product="daily", stride_days=DEFAULT_STRIDE_DAYS)` on the spec bbox
+  directly (the VNP46A2 10°×10° tiles are global — nothing to clamp)
+  with `series=None` (no lake-average equivalent; the chart panel
+  shows a placeholder). Provenance key is `fetch["blackmarble"]`
+  (per-file URLs + SHA-256 + tile list + per-day
+  `{"expected": n, "retrieved": m}` + skipped tiles/days). The LAADS
+  archive needs a free Earthdata Login, so the fetch failure message
+  names `EARTHDATA_USERNAME`/`EARTHDATA_PASSWORD` (or `~/.netrc`) and
+  the `survey-currents[blackmarble]` (h5py) extra.
+* `plan_fetch` routes `blackmarble` (the source comes from
+  `viz.sources.resolve_source` on survey-viz >= 0.8.0: any region,
+  `variable="night-lights"` always pins `blackmarble`). A `blackmarble`
+  pin on any other variable is refused as `bad_variable`.
+  `variable="power-outage"` is refused honestly as `no_adapter` before
+  the region fall-through: outage mapping is temporal change detection
+  across two or more epochs, and a single daily Black Marble map cannot
+  show it — the refusal names the real reason, not the legacy-path
+  message.
+* `_field_to_dict` adapts a survey-currents `LightsField` through the
+  generic 3D-`values` path — nW/cm²/sr radiance with NaN for
+  unlit/missing — zero renderer changes.
 
 ## ERA5 contract (survey-viz 0.3.0 / survey-currents 0.4.0)
 

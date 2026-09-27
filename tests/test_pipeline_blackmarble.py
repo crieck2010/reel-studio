@@ -1,13 +1,14 @@
-"""GPM IMERG precipitation flow-through (no network, no peers needed).
+"""NASA Black Marble night-lights flow-through (no network, no peers needed).
 
-Covers: plan_fetch routing for source "imerg" (fetchable in any region,
-variable "tp" only — other variables are bad_variable), the
-run_pipeline imerg branch (fetch_imerg(bbox, start, end,
-accumulate="daily", run="late", stride_days=...), series=None,
-provenance under fetch["imerg"]), _field_to_dict adapting a
-RainField-shaped object with zero renderer changes, the missing-adapter
-upgrade message (survey-currents>=0.8.0), fetch-failure wrapping, and
-wire_peers lazily exposing fetch_imerg.
+Covers: plan_fetch routing for source "blackmarble" (fetchable in any
+region, variable "night-lights" only — other variables are
+bad_variable), the honest "power-outage" refusal (no_adapter, naming
+change detection), the run_pipeline blackmarble branch
+(fetch_blackmarble(bbox, start, end, product="daily", stride_days=...),
+series=None, provenance under fetch["blackmarble"]), _field_to_dict
+adapting a LightsField-shaped object with zero renderer changes, the
+missing-adapter upgrade message (survey-currents>=0.9.0), fetch-failure
+wrapping, and wire_peers lazily exposing fetch_blackmarble.
 """
 
 from __future__ import annotations
@@ -31,33 +32,30 @@ from studio.pipeline import (
 # --- fakes --------------------------------------------------------------------
 
 
-class FakeRainField:
-    """RainField-shaped: times/lats/lons + 3D values (mm/day, NaN=missing)."""
+class FakeLightsField:
+    """LightsField-shaped: times/lats/lons + 3D values (nW/cm²/sr, NaN=unlit)."""
 
     def __init__(self, provenance=None):
         self.times = [dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc),
                       dt.datetime(2024, 1, 2, tzinfo=dt.timezone.utc)]
-        self.lats = np.array([25.0, 26.0, 27.0, 28.0])
-        self.lons = np.array([-90.0, -89.0, -88.0, -87.0])
-        vals = np.full((2, 4, 4), 12.5)
-        vals[:, 0, :] = np.nan  # a missing-like NaN row
+        self.lats = np.array([34.0, 35.0, 36.0, 37.0])
+        self.lons = np.array([-122.0, -121.0, -120.0, -119.0])
+        vals = np.full((2, 4, 4), 25.0)
+        vals[:, 0, :] = np.nan  # an unlit/missing-like NaN row
         self.values = vals
-        self.units = "mm/day"
-        self.run = "late"
-        self.accumulate = "daily"
+        self.units = "nW/cm²/sr"
         self.provenance = provenance or {
-            "source": "NASA GPM IMERG V07 (GPM_3IMERGHHL)",
-            "n_files": 96,
-            "run": "late",
-            "accumulate": "daily",
+            "source": "NASA Black Marble VNP46A2 V002",
+            "product": "VNP46A2",
+            "n_files": 2,
         }
 
 
-class FakeRainSpec:
-    def __init__(self, variable="tp", region_key="gulf-of-mexico"):
-        self.title = "Gulf of Mexico — Precipitation, 2024"
+class FakeLightsSpec:
+    def __init__(self, variable="night-lights", region_key="california"):
+        self.title = "California — Night Lights, 2024"
         self.region_key = region_key
-        self.bbox = (-97.0, 18.0, -82.0, 31.0)
+        self.bbox = (-124.0, 32.0, -114.0, 42.0)
         self.variable = variable
         self.start = "2024-01-01"
         self.end = "2024-01-02"
@@ -68,7 +66,7 @@ class FakeRainSpec:
                 "start": self.start, "end": self.end}
 
 
-def make_imerg_peers(calls, fail_at=None, with_fetch=True):
+def make_blackmarble_peers(calls, fail_at=None, with_fetch=True):
     seen = {}
 
     def _guard(name):
@@ -83,23 +81,23 @@ def make_imerg_peers(calls, fail_at=None, with_fetch=True):
 
     @_guard("is_fetchable")
     def is_fetchable(key):
-        return False  # region check must NOT gate imerg (source routing does)
+        return False  # region check must NOT gate blackmarble (source routing does)
 
     @_guard("resolve_source")
     def resolve_source(spec):
-        return "imerg" if spec.variable == "tp" else ""
+        return "blackmarble" if spec.variable == "night-lights" else ""
 
     ns = {"is_fetchable": is_fetchable, "resolve_source": resolve_source}
 
     if with_fetch:
-        @_guard("fetch_imerg")
-        def fetch_imerg(bbox, start, end, **kwargs):
+        @_guard("fetch_blackmarble")
+        def fetch_blackmarble(bbox, start, end, **kwargs):
             seen["bbox"] = tuple(bbox)
             seen["start"] = start
             seen["end"] = end
             seen["kwargs"] = kwargs
-            return FakeRainField()
-        ns["fetch_imerg"] = fetch_imerg
+            return FakeLightsField()
+        ns["fetch_blackmarble"] = fetch_blackmarble
 
     @_guard("render_viz")
     def render_viz(spec, field, series, out_dir):
@@ -135,84 +133,101 @@ def make_imerg_peers(calls, fail_at=None, with_fetch=True):
 # --- plan_fetch ---------------------------------------------------------------
 
 
-def _resolve_imerg(spec):
-    return "imerg" if spec.variable == "tp" else ""
+def _resolve_blackmarble(spec):
+    return "blackmarble" if spec.variable == "night-lights" else ""
 
 
-def test_plan_fetch_imerg_fetchable_any_region():
-    for region in ("gulf-of-mexico", "north-atlantic", "caribbean-sea"):
-        spec = FakeRainSpec(region_key=region)
-        plan = plan_fetch(spec, lambda key: False, _resolve_imerg)
+def test_plan_fetch_blackmarble_fetchable_any_region():
+    for region in ("california", "north-atlantic", "amazon-basin", "global"):
+        spec = FakeLightsSpec(region_key=region)
+        plan = plan_fetch(spec, lambda key: False, _resolve_blackmarble)
         assert plan.fetchable, f"region {region!r}: {plan.reason}"
-        assert plan.source == "imerg"
+        assert plan.source == "blackmarble"
 
 
-def test_plan_fetch_imerg_wrong_variable_refused():
-    spec = FakeRainSpec(variable="wind")
-    plan = plan_fetch(spec, lambda key: False, lambda s: "imerg")
+def test_plan_fetch_blackmarble_wrong_variable_refused():
+    spec = FakeLightsSpec(variable="sst")
+    plan = plan_fetch(spec, lambda key: False, lambda s: "blackmarble")
     assert not plan.fetchable
     assert plan.kind == "bad_variable"
-    assert "'tp'" in plan.reason
+    assert "'night-lights'" in plan.reason
 
 
-def test_source_labels_for_imerg():
-    assert pipeline.SOURCE_LABELS["imerg"] == "NASA GPM IMERG V07"
+def test_plan_fetch_power_outage_refused_honestly():
+    spec = FakeLightsSpec(variable="power-outage")
+    plan = plan_fetch(spec, lambda key: True, lambda s: "")
+    assert not plan.fetchable
+    assert plan.kind == "no_adapter"
+    assert "change detection" in plan.reason
+    assert "single daily Black Marble" in plan.reason
 
 
-def test_tp_in_supported_variables():
-    assert "tp" in pipeline.SUPPORTED_VARIABLES
+def test_plan_fetch_power_outage_refused_in_unfetchable_region_too():
+    spec = FakeLightsSpec(variable="power-outage")
+    plan = plan_fetch(spec, lambda key: False, lambda s: "")
+    assert not plan.fetchable
+    assert plan.kind == "no_adapter"
+    assert "change detection" in plan.reason
+
+
+def test_source_labels_for_blackmarble():
+    assert pipeline.SOURCE_LABELS["blackmarble"] == "NASA Black Marble VNP46A2"
+
+
+def test_night_lights_in_supported_variables():
+    assert "night-lights" in pipeline.SUPPORTED_VARIABLES
+    assert "power-outage" not in pipeline.SUPPORTED_VARIABLES
 
 
 # --- _field_to_dict -----------------------------------------------------------
 
 
-def test_field_to_dict_adapts_rain_field_unchanged():
-    d = _field_to_dict(FakeRainField())
+def test_field_to_dict_adapts_lights_field_unchanged():
+    d = _field_to_dict(FakeLightsField())
     assert sorted(d.keys()) == ["lats", "lons", "times", "values"]
     assert d["times"] == ["2024-01-01", "2024-01-02"]
     assert d["values"].shape == (2, 4, 4)
-    assert np.isnan(d["values"][:, 0, :]).all()  # missing NaNs survive
+    assert np.isnan(d["values"][:, 0, :]).all()  # unlit NaNs survive
 
 
 # --- run_pipeline -------------------------------------------------------------
 
 
-def test_run_pipeline_imerg_branch(tmp_path):
+def test_run_pipeline_blackmarble_branch(tmp_path):
     calls = []
-    peers, seen = make_imerg_peers(calls)
+    peers, seen = make_blackmarble_peers(calls)
     out = str(tmp_path / "reel")
-    result = run_pipeline(FakeRainSpec(), peers, out)
+    result = run_pipeline(FakeLightsSpec(), peers, out)
 
-    assert "fetch_imerg" in calls
-    assert seen["bbox"] == (-97.0, 18.0, -82.0, 31.0)
+    assert "fetch_blackmarble" in calls
+    assert seen["bbox"] == (-124.0, 32.0, -114.0, 42.0)
     assert seen["start"] == "2024-01-01"
     assert seen["end"] == "2024-01-02"
-    # the pipeline relies on the fetch_imerg defaults for these two
-    assert seen["kwargs"] == {"accumulate": "daily", "run": "late",
+    assert seen["kwargs"] == {"product": "daily",
                               "stride_days": 30}  # DEFAULT_STRIDE_DAYS
-    assert seen["render_series"] is None  # precipitation has no lake series
+    assert seen["render_series"] is None  # night lights have no lake series
     assert seen["render_field_keys"] == ["lats", "lons", "times", "values"]
-    assert result.source == "imerg"
+    assert result.source == "blackmarble"
     assert result.n_frames == 2
-    assert result.provenance["fetch"]["imerg"]["n_files"] == 96
-    assert result.provenance["fetch"]["imerg"]["run"] == "late"
+    assert result.provenance["fetch"]["blackmarble"]["n_files"] == 2
+    assert result.provenance["fetch"]["blackmarble"]["product"] == "VNP46A2"
 
 
-def test_run_pipeline_imerg_missing_adapter(tmp_path):
-    peers, _seen = make_imerg_peers([], with_fetch=False)
+def test_run_pipeline_blackmarble_missing_adapter(tmp_path):
+    peers, _seen = make_blackmarble_peers([], with_fetch=False)
     with pytest.raises(UnfetchableRegionError) as excinfo:
-        run_pipeline(FakeRainSpec(), peers, str(tmp_path / "reel"))
+        run_pipeline(FakeLightsSpec(), peers, str(tmp_path / "reel"))
     msg = str(excinfo.value)
-    assert "survey-currents>=0.8.0" in msg
-    assert "imerg" in msg
+    assert "survey-currents>=0.9.0" in msg
+    assert "blackmarble" in msg
 
 
-def test_run_pipeline_imerg_fetch_failure_wrapped(tmp_path):
-    peers, _seen = make_imerg_peers([], fail_at="fetch_imerg")
+def test_run_pipeline_blackmarble_fetch_failure_wrapped(tmp_path):
+    peers, _seen = make_blackmarble_peers([], fail_at="fetch_blackmarble")
     with pytest.raises(RuntimeError) as excinfo:
-        run_pipeline(FakeRainSpec(), peers, str(tmp_path / "reel"))
+        run_pipeline(FakeLightsSpec(), peers, str(tmp_path / "reel"))
     msg = str(excinfo.value)
-    assert "IMERG fetch failed" in msg
+    assert "Black Marble fetch failed" in msg
     assert "EARTHDATA_USERNAME" in msg  # actionable credential hint
     assert "h5py" in msg
 
@@ -220,9 +235,10 @@ def test_run_pipeline_imerg_fetch_failure_wrapped(tmp_path):
 # --- wire_peers -----------------------------------------------------------------
 
 
-def _fake_import_imerg(name, *a, **k):
-    if name == "currents.imerg":
-        return types.SimpleNamespace(fetch_imerg=lambda *a, **k: "imerg")
+def _fake_import_blackmarble(name, *a, **k):
+    if name == "currents.blackmarble":
+        return types.SimpleNamespace(
+            fetch_blackmarble=lambda *a, **k: "blackmarble")
     if name == "currents.glsea":
         return types.SimpleNamespace(
             fetch_glsea_sst=lambda *a, **k: None,
@@ -231,16 +247,16 @@ def _fake_import_imerg(name, *a, **k):
             GLSEA_LON_MAX=-76.0, GLSEA_LAT_MAX=49.0)
     if name in ("viz.sources", "currents.sst_global", "currents.era5",
                 "currents.currents_global", "currents.fires",
-                "currents.sea_ice",
-                "currents.blackmarble"):
+                "currents.sea_ice", "currents.imerg"):
         raise ImportError(f"No module named {name!r} (simulated old peer)")
     import importlib
     return importlib.import_module(name, *a, **k)
 
 
 def _statuses():
+    from studio import peers as peers_mod
     return {
-        "survey-viz": types.SimpleNamespace(
+        "survey-viz": peers_mod.PeerStatus(
             repo="survey-viz", module_name="viz",
             pip_command="p", needed_for="n",
             module=types.SimpleNamespace(
@@ -248,7 +264,7 @@ def _statuses():
                 UnparseableDescription=Exception,
                 VizSpec=object, is_fetchable=lambda k: True,
                 get_region=lambda k: None, render_viz=lambda *a, **k: None)),
-        "survey-currents": types.SimpleNamespace(
+        "survey-currents": peers_mod.PeerStatus(
             repo="survey-currents",
             module_name="currents", pip_command="p", needed_for="n",
             module=types.SimpleNamespace(
@@ -257,7 +273,7 @@ def _statuses():
                     fetch_glsea_lake_averages=lambda *a, **k: None,
                     GLSEA_LON_MIN=-93.0, GLSEA_LAT_MIN=41.0,
                     GLSEA_LON_MAX=-76.0, GLSEA_LAT_MAX=49.0))),
-        "survey-animate": types.SimpleNamespace(
+        "survey-animate": peers_mod.PeerStatus(
             repo="survey-animate", module_name="animate",
             pip_command="p", needed_for="n",
             module=types.SimpleNamespace(
@@ -265,11 +281,12 @@ def _statuses():
     }
 
 
-def test_wire_peers_exposes_fetch_imerg_lazily(monkeypatch):
+def test_wire_peers_exposes_fetch_blackmarble_lazily(monkeypatch):
     import importlib
     from studio import peers as peers_mod
 
-    monkeypatch.setattr(importlib, "import_module", _fake_import_imerg)
+    monkeypatch.setattr(importlib, "import_module",
+                        _fake_import_blackmarble)
     ns = peers_mod.wire_peers(_statuses())
-    assert ns.fetch_imerg() == "imerg"
-    assert ns.fetch_nsidc is None  # simulated old peer lacks sea_ice
+    assert ns.fetch_blackmarble() == "blackmarble"
+    assert ns.fetch_imerg is None  # simulated old peer lacks imerg

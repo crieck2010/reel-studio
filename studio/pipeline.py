@@ -61,9 +61,19 @@ FIRE_VARIABLES = ("fire",)
 #: NSIDC.
 ICE_VARIABLES = ("sea-ice",)
 
+#: The night-lights variable (NASA Black Marble VNP46A2 via
+#: ``currents.blackmarble``, survey-currents >= 0.9.0, survey-viz >=
+#: 0.8.0). Fetchable in any region — the VNP46A2 tiles are global.
+#: ``power-outage`` is deliberately NOT in this list: it parses
+#: (survey-viz >= 0.8.0) but has no fetch adapter, because outage
+#: mapping is temporal change detection across two or more epochs and
+#: a single daily Black Marble map cannot show it — plan_fetch refuses
+#: it honestly, never misrendering a blackout as a lights map.
+NIGHT_VARIABLES = ("night-lights",)
+
 #: Variables with a fetch adapter: SST + the ERA5 atmosphere set +
-#: currents + active fires + sea ice.
-SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES + FIRE_VARIABLES + ICE_VARIABLES
+#: currents + active fires + sea ice + night lights.
+SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES + FIRE_VARIABLES + ICE_VARIABLES + NIGHT_VARIABLES
 
 #: Region keys of the 5 Great Lakes (currents have no adapter there).
 GREAT_LAKES_KEYS = frozenset(FETCHABLE_REGION_TO_LAKE)
@@ -79,6 +89,7 @@ SOURCE_LABELS = {
     "firms": "NASA FIRMS",
     "nsidc": "NSIDC Sea Ice Index (G02135 v4.0)",
     "imerg": "NASA GPM IMERG V07",
+    "blackmarble": "NASA Black Marble VNP46A2",
 }
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
@@ -112,7 +123,7 @@ class FetchPlan:
     kind: str = "ok"
     #: which adapter the fetch uses:
     #: "glsea" | "oisst" | "mur" | "era5" | "oscar" | "cmems-currents" |
-    #: "firms" | "nsidc" | "imerg" ("ok" plans only)
+    #: "firms" | "nsidc" | "imerg" | "blackmarble" ("ok" plans only)
     source: str = ""
 
 
@@ -268,6 +279,30 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             variable=variable,
             kind="no_adapter",
         )
+
+    # Power outages / blackouts (survey-viz >= 0.8.0). ``power-outage``
+    # is refused honestly here: outage mapping is temporal change
+    # detection across two or more epochs, and a single daily Black
+    # Marble map cannot show it — so it is never routed to the
+    # ``blackmarble`` adapter (viz.sources.default_source refuses it
+    # too). This check runs before the region fall-through so the
+    # refusal names the real reason instead of the legacy-path message.
+    if variable == "power-outage":
+        return FetchPlan(
+            fetchable=False,
+            reason=(
+                "Power-outage / blackout mapping ('power-outage') has no "
+                "fetch adapter yet: it is temporal change detection "
+                "across two or more epochs, and a single daily Black "
+                "Marble night-lights map cannot show it. The description "
+                "parsed fine; asking for 'night lights', 'city lights', "
+                "or 'electrification' instead routes to NASA Black "
+                "Marble VNP46A2."
+            ),
+            region_key=region_key,
+            variable=variable,
+            kind="no_adapter",
+        )
     if variable == "sea-ice" and source != "nsidc":
         return FetchPlan(
             fetchable=False,
@@ -386,6 +421,38 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             region_key=region_key,
             variable=variable,
             source="imerg",
+        )
+
+    # NASA Black Marble night lights (survey-viz >= 0.8.0,
+    # survey-currents >= 0.9.0): fetchable in ANY region — the VNP46A2
+    # tiles are global, so no region-key check applies. Only the
+    # "night-lights" variable: an explicit blackmarble pin on another
+    # variable is refused as a bad variable. ``power-outage`` never
+    # reaches this branch — viz.sources.default_source refuses it
+    # honestly (outage mapping is change detection, not a
+    # single-epoch map), and plan_fetch refuses it below.
+    if source == "blackmarble":
+        if variable != "night-lights":
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Source 'blackmarble' only serves the 'night-lights' "
+                    f"variable; got variable '{variable}'."
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
+        return FetchPlan(
+            fetchable=True,
+            reason=(
+                f"Region '{region_key}' is fetchable via "
+                f"{SOURCE_LABELS['blackmarble']} (variable '{variable}', "
+                "source 'blackmarble')."
+            ),
+            region_key=region_key,
+            variable=variable,
+            source="blackmarble",
         )
 
     if not is_fetchable(region_key):
@@ -554,7 +621,10 @@ def _field_to_dict(field: Any) -> Dict[str, Any]:
     survey-currents >= 0.8.0) needs no adaptation either: its 3D
     ``values`` (mm/day daily totals, or mm/hr rates for
     ``accumulate="native"``; NaN for missing) flow through the generic
-    attribute path unchanged.
+    attribute path unchanged. A survey-currents ``LightsField`` (NASA
+    Black Marble night lights, survey-currents >= 0.9.0) needs no
+    adaptation either: its 3D ``values`` (nW/cm²/sr radiance, NaN for
+    unlit/missing) flow through the generic attribute path unchanged.
     """
 
     # FireField (NASA FIRMS active fires): bin detections into daily
@@ -869,6 +939,37 @@ def run_pipeline(
             ) from exc
         series = None
         fetch_key = "imerg"
+    elif source == "blackmarble":
+        # NASA Black Marble VNP46A2 daily night lights:
+        # fetch_blackmarble(bbox, start, end, product="daily",
+        # stride_days=...) on the spec bbox directly — the tiles are
+        # global, nothing to clamp. series=None: there is no
+        # lake-average equivalent; render_viz shows a placeholder chart
+        # panel. _field_to_dict adapts the LightsField via its 3D
+        # ``values`` (nW/cm²/sr radiance, NaN for unlit/missing).
+        label = SOURCE_LABELS[source]
+        report(0.05, f"Fetching {label} night lights…")
+        fetch_fn = getattr(peers, "fetch_blackmarble", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                "Source 'blackmarble' needs survey-currents>=0.9.0 with the "
+                "Black Marble night-lights adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        try:
+            field = fetch_fn(
+                tuple(spec.bbox), spec.start, spec.end,
+                product="daily", stride_days=stride_days)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Black Marble fetch failed ({type(exc).__name__}: {exc}). "
+                "Check the network connection, that h5py is installed "
+                "(pip install \"survey-currents[blackmarble]\"), and that a free "
+                "Earthdata Login is configured (EARTHDATA_USERNAME / "
+                "EARTHDATA_PASSWORD or ~/.netrc)."
+            ) from exc
+        series = None
+        fetch_key = "blackmarble"
     else:
         # Global SST (OISST/MUR): fetch on the spec bbox directly — the
         # global grids have no lake bounds to clamp to — and render with
@@ -925,7 +1026,9 @@ def run_pipeline(
         "source": source,
         "fetch": {
             # "sst" for the SST adapters, "era5" for the atmosphere adapter,
-            # "oscar"/"cmems-currents" for the currents adapters (the field
+            # "oscar"/"cmems-currents" for the currents adapters, "firms"
+            # for active fires, "nsidc" for sea ice, "imerg" for
+            # precipitation, "blackmarble" for night lights (the field
             # provenance carries the source-specific payload).
             fetch_key: dict(getattr(field, "provenance", {}) or {}),
             "averages": dict(getattr(series, "provenance", {}) or {}),
