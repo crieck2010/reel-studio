@@ -90,7 +90,10 @@ four lakes' bboxes already fit the grid.
   (needs `survey-currents>=0.9.0`, `h5py` via
   `survey-currents[blackmarble]`, and a free Earthdata Login),
   `bathymetry` / `elevation` via GEBCO 2024 in any region (needs
-  `survey-currents>=0.10.0`, no account, no heavy deps), and
+  `survey-currents>=0.10.0`, no account, no heavy deps),
+  `storm-tracks` via NOAA IBTrACS v04r01 best tracks in any region
+  (needs `survey-currents>=0.11.0` + `survey-viz>=0.10.0`, keyless,
+  `netCDF4`), and
   `power-outage` stays an honest refusal (change detection, not a
   single-epoch map). `country-borders` stays an honest refusal too
   (Natural Earth vectors are a cartographic underlay, not a data
@@ -244,6 +247,34 @@ four lakes' bboxes already fit the grid.
 * `_field_to_dict` adapts a survey-currents `TopoField` through the
   generic 3D-`values` path — metres, positive up — zero renderer
   changes.
+
+## IBTrACS storm-tracks contract (survey-viz 0.10.0 / survey-currents 0.11.0)
+
+* `wire_peers` exposes `fetch_ibtracs` (None when survey-currents <
+  0.11.0 — the pipeline then raises the honest upgrade message).
+* `plan_fetch` routes `ibtracs` (the source comes from
+  `viz.sources.resolve_source` on survey-viz >= 0.10.0: any region,
+  `variable="storm-tracks"` always pins `ibtracs`). An `ibtracs` pin
+  on any other variable is refused as `bad_variable`.
+* `run_pipeline` calls
+  `fetch_ibtracs(bbox, start, end, storm_name=spec.storm_name or None)`
+  — the keyless v04r01 NetCDF (1980–present by default) is global, so
+  nothing is clamped. Ranking (`storm_rank="strongest"` +
+  `storm_top_n`, default 5) is applied here via
+  `StormField.rank_by_intensity()` — lifetime maximum sustained wind
+  (kt), the documented aggregation rule.
+* The `StormField` goes to `render_viz` as its `to_dict()` form
+  (`"storm_tracks"` key) — **never** through `_field_to_dict`, which
+  only understands scalar 3-D grids. Provenance rides on the field
+  object (`fetch["ibtracs"]`); `series=None`.
+* A requested ERA5 overlay ("… with the wind field") is fetched via
+  `fetch_era5` and attached as `overlay_grids` dicts
+  (`{"times", "lats", "lons", "grid"}` per overlay) under the track
+  dict — survey-viz >= 0.10.0 draws the contours under the tracks.
+  Context is best-effort: a missing peer, missing CDS credentials, or
+  a failed download degrades gracefully (the renderer records
+  `"absent"` per overlay in the manifest) instead of failing the
+  reel.
 
 ## ERA5 contract (survey-viz 0.3.0 / survey-currents 0.4.0)
 

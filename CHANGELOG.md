@@ -5,6 +5,24 @@ All notable changes to reel-studio. Format follows [Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- IBTrACS storm-tracks flow-through (needs survey-viz 0.10.0 +
+  survey-currents 0.11.0): `plan_fetch` routes source `"ibtracs"` as
+  fetchable in any region for `variable="storm-tracks"` (an `ibtracs`
+  pin on any other variable is refused as `bad_variable`).
+  `run_pipeline` calls
+  `fetch_ibtracs(bbox, start, end, storm_name=spec.storm_name or None)`
+  on the spec bbox directly, applies `storm_rank="strongest"` +
+  `storm_top_n` (default 5) via `StormField.rank_by_intensity()`
+  (lifetime maximum sustained wind), and hands the `StormField` to
+  `render_viz` as its `to_dict()` form — never through
+  `_field_to_dict`. A requested ERA5 overlay ("… with the wind
+  field") is fetched via `fetch_era5` and attached as `overlay_grids`
+  dicts; an unavailable context degrades gracefully (the renderer
+  records `"absent"` per overlay). Provenance under
+  `fetch["ibtracs"]`, `series=None`. `wire_peers` exposes
+  `fetch_ibtracs` lazily (honest upgrade message naming
+  `survey-currents>=0.11.0` on older peers). Documented in
+  `docs/INTEROP.md`.
 - GEBCO topography/bathymetry flow-through (needs survey-viz 0.9.0 +
   survey-currents 0.10.0): `plan_fetch` routes source `"gebco"` as
   fetchable in any region for `bathymetry`/`elevation` (a `gebco` pin

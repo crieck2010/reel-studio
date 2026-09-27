@@ -12,7 +12,7 @@ import datetime as _dt
 import hashlib
 import os
 import types
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -81,9 +81,16 @@ NIGHT_VARIABLES = ("night-lights",)
 #: empty map.
 GEBCO_VARIABLES = ("bathymetry", "elevation")
 
+#: The storm-track variable (NOAA IBTrACS v04r01 tropical-cyclone best
+#: tracks via ``currents.storms``, survey-currents >= 0.11.0,
+#: survey-viz >= 0.10.0). Fetchable in any region — the v04r01 archive
+#: is global (1980–present by default).
+STORM_VARIABLES = ("storm-tracks",)
+
 #: Variables with a fetch adapter: SST + the ERA5 atmosphere set +
-#: currents + active fires + sea ice + night lights + GEBCO topography.
-SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES + FIRE_VARIABLES + ICE_VARIABLES + NIGHT_VARIABLES + GEBCO_VARIABLES
+#: currents + active fires + sea ice + night lights + GEBCO topography
+#: + IBTrACS storm tracks.
+SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES + FIRE_VARIABLES + ICE_VARIABLES + NIGHT_VARIABLES + GEBCO_VARIABLES + STORM_VARIABLES
 
 #: Region keys of the 5 Great Lakes (currents have no adapter there).
 GREAT_LAKES_KEYS = frozenset(FETCHABLE_REGION_TO_LAKE)
@@ -101,6 +108,7 @@ SOURCE_LABELS = {
     "imerg": "NASA GPM IMERG V07",
     "blackmarble": "NASA Black Marble VNP46A2",
     "gebco": "GEBCO 2024",
+    "ibtracs": "NOAA IBTrACS v04r01",
 }
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
@@ -265,6 +273,34 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             region_key=region_key,
             variable=variable,
             source=source,
+        )
+
+    # IBTrACS storm tracks (survey-viz >= 0.10.0, survey-currents >=
+    # 0.11.0): fetchable in ANY region — the v04r01 best-track archive
+    # is global (1980–present by default), so no region-key check
+    # applies.
+    if source == "ibtracs":
+        if variable != "storm-tracks":
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Source 'ibtracs' only serves the 'storm-tracks' "
+                    f"variable; got variable '{variable}'."
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
+        return FetchPlan(
+            fetchable=True,
+            reason=(
+                f"Region '{region_key}' is fetchable via "
+                f"{SOURCE_LABELS['ibtracs']} (variable '{variable}', "
+                "source 'ibtracs')."
+            ),
+            region_key=region_key,
+            variable=variable,
+            source="ibtracs",
         )
 
     # Sea ice / land ice (survey-viz >= 0.6.0, survey-currents >= 0.7.0).
@@ -767,6 +803,47 @@ def _field_to_dict(field: Any) -> Dict[str, Any]:
     return out
 
 
+def _fetch_storm_context(peers: Any, overlays: List[str], spec: Any,
+                         stride_hours: int) -> Dict[str, Dict[str, Any]]:
+    """Fetch ERA5 context grids for a storm-tracks render; ``{}`` on failure.
+
+    The storm renderer draws optional ERA5 contours (e.g. wind, msl)
+    *under* the IBTrACS tracks. Context is best-effort: a missing
+    ``fetch_era5`` peer, missing CDS credentials, or a failed download
+    degrades gracefully — the renderer records each requested overlay
+    as ``"absent"`` in the manifest instead of failing the reel.
+    """
+    era5_fn = getattr(peers, "fetch_era5", None)
+    if era5_fn is None:
+        return {}
+    try:
+        atmo = era5_fn(list(overlays), tuple(spec.bbox),
+                       spec.start, spec.end, stride_hours=stride_hours)
+    except Exception:
+        return {}
+    grids = getattr(atmo, "overlay_grids", None) or {}
+    base_var = getattr(atmo, "base_variable", "")
+    times = [_time_to_date_str(t) for t in getattr(atmo, "times", [])]
+    lats = np.asarray(getattr(atmo, "lats", []), dtype=float)
+    lons = np.asarray(getattr(atmo, "lons", []), dtype=float)
+    out: Dict[str, Dict[str, Any]] = {}
+    for name in overlays:
+        arr = grids.get(name)
+        if arr is None and name == base_var:
+            # The base variable's grid rides on .values, not
+            # .overlay_grids.
+            arr = getattr(atmo, "values", None)
+        if arr is None:
+            continue
+        out[name] = {
+            "times": list(times),
+            "lats": lats,
+            "lons": lons,
+            "grid": np.ma.filled(np.ma.asarray(arr, dtype=float), np.nan),
+        }
+    return out
+
+
 def _series_to_dict(series: Any) -> Optional[Dict[str, Any]]:
     """Adapt a survey-currents LakeSeries to survey-viz's duck-typed series.
 
@@ -838,6 +915,10 @@ def run_pipeline(
     # -- 1. fetch -----------------------------------------------------------
     clamp_notes: List[str] = []
     fetch_key = "sst"
+    # Storm tracks bypass the scalar-grid adapter: the ibtracs branch
+    # sets render_dict to the StormField's to_dict() form, which
+    # render_viz (survey-viz >= 0.10.0) draws as track polylines.
+    render_dict: Optional[Dict[str, Any]] = None
     if source == "glsea":
         report(0.05, "Fetching GLSEA sea-surface-temperature grid…")
         fetch_bbox = _clamp_bbox(
@@ -1079,6 +1160,64 @@ def run_pipeline(
             ) from exc
         series = None
         fetch_key = "gebco"
+    elif source == "ibtracs":
+        # NOAA IBTrACS v04r01 tropical-cyclone best tracks:
+        # fetch_ibtracs(bbox, start, end, storm_name=...) on the spec
+        # bbox directly — the archive is global, nothing to clamp.
+        # series=None: there is no lake-average equivalent; render_viz
+        # shows a placeholder chart panel. The StormField goes to
+        # render_viz as its to_dict() form (never through
+        # _field_to_dict, which only understands scalar 3-D grids):
+        # survey-viz >= 0.10.0 draws cumulative track polylines from
+        # the "storm_tracks" key. Ranking (storm_rank="strongest" +
+        # storm_top_n) is applied here, on the documented lifetime
+        # maximum sustained wind rule, via
+        # StormField.rank_by_intensity(). A requested ERA5 overlay
+        # ("… with the wind field") is fetched as context and attached
+        # as overlay_grids dicts; an unavailable context degrades
+        # gracefully (the renderer records "absent" per overlay).
+        label = SOURCE_LABELS[source]
+        storm_name = str(getattr(spec, "storm_name", "") or "").strip() or None
+        report(0.05, f"Fetching {label} storm tracks"
+               + (f" for '{storm_name}'" if storm_name else "") + "…")
+        fetch_fn = getattr(peers, "fetch_ibtracs", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                "Source 'ibtracs' needs survey-currents>=0.11.0 with the "
+                "IBTrACS storm-track adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        try:
+            field = fetch_fn(
+                tuple(spec.bbox), spec.start, spec.end,
+                storm_name=storm_name)
+        except Exception as exc:
+            raise RuntimeError(
+                f"IBTrACS fetch failed ({type(exc).__name__}: {exc}). "
+                "Check the network connection and that netCDF4 is installed "
+                "(pip install netCDF4). The archive is keyless HTTPS (no "
+                "account needed), so this is usually a connectivity or "
+                "date-range issue."
+            ) from exc
+        rank = str(getattr(spec, "storm_rank", "") or "").strip().lower()
+        if rank == "strongest" and hasattr(field, "rank_by_intensity"):
+            top_n = getattr(spec, "storm_top_n", None) or 5
+            try:
+                top_n = max(1, int(top_n))
+            except (TypeError, ValueError):
+                top_n = 5
+            field = replace(field, tracks=field.rank_by_intensity()[:top_n])
+        render_dict = (field.to_dict() if hasattr(field, "to_dict")
+                       else field)
+        overlays = [str(o) for o in (getattr(spec, "overlays", None) or ())]
+        if overlays and isinstance(render_dict, dict):
+            context = _fetch_storm_context(
+                peers, overlays, spec, stride_hours)
+            if context:
+                render_dict = dict(render_dict)
+                render_dict["overlay_grids"] = context
+        series = None
+        fetch_key = "ibtracs"
     else:
         # Global SST (OISST/MUR): fetch on the spec bbox directly — the
         # global grids have no lake bounds to clamp to — and render with
@@ -1112,8 +1251,10 @@ def run_pipeline(
     # own date coercion cannot parse — see docs/INTEROP.md), and the series
     # to the documented dates/values dict.
     report(0.50, "Rendering reel frames…")
+    render_field = (render_dict if render_dict is not None
+                    else _field_to_dict(field))
     frames, manifest_path = peers.render_viz(
-        spec, _field_to_dict(field), _series_to_dict(series),
+        spec, render_field, _series_to_dict(series),
         out_dir=frames_dir)
 
     # -- 3. encode ------------------------------------------------------------
