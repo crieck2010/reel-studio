@@ -26,7 +26,7 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
     "survey-currents": {
         "module": "currents",
         "pip": "pip install git+https://github.com/crieck2010/survey-currents.git",
-        "needed_for": "fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages), global OISST/MUR (fetch_oisst, fetch_mur), ERA5 atmosphere (fetch_era5), global currents (fetch_oscar, fetch_cmems_currents), NASA FIRMS active fires (fetch_firms), NSIDC sea-ice concentration (fetch_nsidc), GPM IMERG precipitation (fetch_imerg), NASA Black Marble night lights (fetch_blackmarble), NOAA IBTrACS storm tracks (fetch_ibtracs), CSR GRACE/GRACE-FO water storage (fetch_grace), USGS streamgages (fetch_usgs), NOAA CoastWatch ocean color (fetch_oceancolor)",
+        "needed_for": "fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages), global OISST/MUR (fetch_oisst, fetch_mur), ERA5 atmosphere (fetch_era5), global currents (fetch_oscar, fetch_cmems_currents), NASA FIRMS active fires (fetch_firms), NSIDC sea-ice concentration (fetch_nsidc), GPM IMERG precipitation (fetch_imerg), NASA Black Marble night lights (fetch_blackmarble), NOAA IBTrACS storm tracks (fetch_ibtracs), CSR GRACE/GRACE-FO water storage (fetch_grace), USGS streamgages (fetch_usgs), NOAA CoastWatch ocean color (fetch_oceancolor), USGS earthquake catalog (fetch_earthquakes)",
     },
     "survey-animate": {
         "module": "animate",
@@ -165,6 +165,10 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         oceancolor = importlib.import_module("currents.oceancolor")
     except ImportError:
         oceancolor = None
+    try:
+        earthquakes = importlib.import_module("currents.earthquakes")
+    except ImportError:
+        earthquakes = None
 
     return types.SimpleNamespace(
         parse_description=viz.parse_description,
@@ -192,6 +196,8 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         fetch_usgs=(streamgages.fetch_usgs if streamgages else None),
         fetch_oceancolor=(oceancolor.fetch_oceancolor
                           if oceancolor else None),
+        fetch_earthquakes=(earthquakes.fetch_earthquakes
+                           if earthquakes else None),
         # GLSEA grid bounds (lon_min, lat_min, lon_max, lat_max); the pipeline
         # clamps spec bboxes into this window before fetching, because the
         # lake-superior gazetteer bbox starts slightly west of the grid floor.

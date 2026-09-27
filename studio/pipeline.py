@@ -134,6 +134,7 @@ SOURCE_LABELS = {
     "grace": "CSR GRACE/GRACE-FO RL06.3",
     "usgs": "USGS Water Services (NWIS)",
     "oceancolor": "NOAA CoastWatch Ocean Color",
+    "comcat": "USGS Earthquake Catalog (ComCat)",
 }
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
@@ -413,6 +414,38 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             region_key=region_key,
             variable=variable,
             source="oceancolor",
+        )
+    # Earthquakes (survey-viz >= 0.14.0, survey-currents >= 0.15.0):
+    # routable from ANY region — ComCat is a global keyless catalog.
+    # Honesty contract: the catalog is OBSERVED events, never a
+    # forecast or hazard model; empty windows are legitimate quiet
+    # periods. The renderer draws cumulative daily frames with
+    # magnitude-scaled, depth-colored markers over a GEBCO underlay.
+    if source == "comcat":
+        if variable != "earthquakes":
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Source 'comcat' only serves the 'earthquakes' "
+                    f"variable; got variable '{variable}'."
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
+        return FetchPlan(
+            fetchable=True,
+            reason=(
+                f"Region '{region_key}' is routable via "
+                f"{SOURCE_LABELS['comcat']} (variable '{variable}', "
+                "source 'comcat'). ComCat is a keyless catalog of "
+                "observed seismic events — not a forecast or hazard "
+                "model; magnitude completeness varies by region and "
+                "time."
+            ),
+            region_key=region_key,
+            variable=variable,
+            source="comcat",
         )
     # Sea level (survey-viz >= 0.11.0) is refused honestly here: no
     # adapter exists, so it is never answered with a GRACE map.
@@ -1732,6 +1765,42 @@ def run_pipeline(
                 peers, context, spec, stride_days)
         series = None
         fetch_key = "oceancolor"
+    elif source == "comcat":
+        # USGS ComCat earthquake catalog (survey-viz >= 0.14.0,
+        # survey-currents >= 0.15.0): fetch_earthquakes(bbox, start,
+        # end) on the spec bbox directly — ComCat is global and
+        # keyless, nothing to clamp. series=None: there is no
+        # spatial-average equivalent; render_viz draws the cumulative
+        # event map, the top-5 ranking panel, and the daily-count
+        # series from the QuakeField itself. The QuakeField goes to
+        # render_viz as its to_dict() form (never through
+        # _field_to_dict, which only understands scalar 3-D grids):
+        # survey-viz draws magnitude-scaled, depth-colored cumulative
+        # daily frames from the "events" key, with an explicit
+        # no-earthquakes message for empty windows. Observed catalog
+        # only — never a forecast.
+        label = SOURCE_LABELS[source]
+        report(0.05, f"Fetching {label} events…")
+        fetch_fn = getattr(peers, "fetch_earthquakes", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                "Source 'comcat' needs survey-currents>=0.15.0 with the "
+                "USGS earthquake catalog adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        try:
+            field = fetch_fn(tuple(spec.bbox), spec.start, spec.end)
+        except Exception as exc:
+            raise RuntimeError(
+                f"ComCat earthquake fetch failed ({type(exc).__name__}: "
+                f"{exc}). Check the network connection. The ComCat FDSN "
+                "event service is keyless HTTPS (no account needed), so "
+                "this is usually a connectivity or date-range issue."
+            ) from exc
+        render_dict = (field.to_dict() if hasattr(field, "to_dict")
+                       else field)
+        series = None
+        fetch_key = "comcat"
     else:
         # Global SST (OISST/MUR): fetch on the spec bbox directly — the
         # global grids have no lake bounds to clamp to — and render with
@@ -1795,7 +1864,8 @@ def run_pipeline(
             # precipitation, "blackmarble" for night lights, "gebco" for
             # topography, "ibtracs" for storm tracks, "grace" for
             # terrestrial water storage, "usgs" for streamgages,
-            # "oceancolor" for ocean color (the field provenance carries
+            # "oceancolor" for ocean color, "comcat" for earthquakes
+            # (the field provenance carries
             # the source-specific payload).
             fetch_key: dict(getattr(field, "provenance", {}) or {}),
             # Ocean-color context companions (currents / sst), only
