@@ -131,6 +131,31 @@ four lakes' bboxes already fit the grid.
   — zero renderer changes; per-detection point markers are deliberately
   deferred to a future renderer version, not half-plumbed.
 
+## Sea-ice contract (survey-viz 0.6.0 / survey-currents 0.7.0)
+
+* `wire_peers` exposes `fetch_nsidc` lazily (None when
+  survey-currents < 0.7.0 — the pipeline then raises the honest upgrade
+  message naming `survey-currents>=0.7.0`).
+* `run_pipeline` calls `fetch_nsidc(bbox, start, end,
+  stride_days=DEFAULT_STRIDE_DAYS)` on the spec bbox directly (the
+  polar grids are hemispheric — nothing to clamp) with `series=None`
+  (no lake-average equivalent; the chart panel shows a placeholder).
+  Provenance key is `fetch["nsidc"]` (per-file URLs + SHA-256 +
+  reprojection method). The archive is keyless HTTPS, so the fetch
+  failure message names connectivity / date range instead of
+  credentials.
+* `plan_fetch` routes `nsidc` (the source comes from
+  `viz.sources.resolve_source` on survey-viz >= 0.6.0: the polar
+  regions `arctic-ocean` / `southern-ocean`, variable `sea-ice` →
+  `nsidc`). `sea-ice` with no resolved source (a non-polar region) is
+  refused honestly — the product has no mid-latitude ice domain.
+  `land-ice` (glaciers / ice sheets / icebergs) is refused honestly
+  too: it parses but is never routed to NSIDC (different physical
+  product, no adapter yet).
+* `_field_to_dict` adapts a survey-currents `IceField` through the
+  generic 3D-`values` path — percent concentration with NaN for
+  land/missing — zero renderer changes.
+
 ## ERA5 contract (survey-viz 0.3.0 / survey-currents 0.4.0)
 
 * `wire_peers` exposes `fetch_era5` (None when survey-currents < 0.4.0 —

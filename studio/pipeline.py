@@ -51,9 +51,19 @@ CURRENTS_VARIABLES = ("currents",)
 #: honestly, naming survey-burn.
 FIRE_VARIABLES = ("fire",)
 
+#: The sea-ice variable (NSIDC G02135 via ``currents.sea_ice``,
+#: survey-currents >= 0.7.0, survey-viz >= 0.6.0). Fetchable only in the
+#: polar regions — the G02135 grids cover north of 30.98°N / south of
+#: 39.23°S. ``land-ice`` is deliberately NOT in this list: it parses
+#: (survey-viz >= 0.6.0) but has no fetch adapter, because glaciers /
+#: ice sheets / icebergs are a different physical product from sea-ice
+#: concentration — plan_fetch refuses it honestly, never routing it to
+#: NSIDC.
+ICE_VARIABLES = ("sea-ice",)
+
 #: Variables with a fetch adapter: SST + the ERA5 atmosphere set +
-#: currents + active fires.
-SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES + FIRE_VARIABLES
+#: currents + active fires + sea ice.
+SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES + FIRE_VARIABLES + ICE_VARIABLES
 
 #: Region keys of the 5 Great Lakes (currents have no adapter there).
 GREAT_LAKES_KEYS = frozenset(FETCHABLE_REGION_TO_LAKE)
@@ -67,6 +77,7 @@ SOURCE_LABELS = {
     "oscar": "NASA PODAAC OSCAR v2.0",
     "cmems-currents": "CMEMS Global Ocean Physics (daily)",
     "firms": "NASA FIRMS",
+    "nsidc": "NSIDC Sea Ice Index (G02135 v4.0)",
 }
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
@@ -99,8 +110,8 @@ class FetchPlan:
     #: "ok" | "no_adapter" (region not fetchable) | "bad_variable"
     kind: str = "ok"
     #: which adapter the fetch uses:
-    #: "glsea" | "oisst" | "mur" | "era5" | "oscar" | "cmems-currents"
-    #: ("ok" plans only)
+    #: "glsea" | "oisst" | "mur" | "era5" | "oscar" | "cmems-currents" |
+    #: "firms" | "nsidc" ("ok" plans only)
     source: str = ""
 
 
@@ -233,6 +244,44 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             source=source,
         )
 
+    # Sea ice / land ice (survey-viz >= 0.6.0, survey-currents >= 0.7.0).
+    # ``land-ice`` is refused honestly here: glaciers, ice sheets, and
+    # icebergs are a different physical product from sea-ice
+    # concentration, and routing them to NSIDC would be a lie — no
+    # adapter exists yet. ``sea-ice`` that resolved to no source (a
+    # non-polar region) is refused too: the G02135 grids cover north of
+    # 30.98°N / south of 39.23°S, so fetching it would return an
+    # all-NaN field.
+    if variable == "land-ice":
+        return FetchPlan(
+            fetchable=False,
+            reason=(
+                "Glaciers, ice sheets, and icebergs ('land-ice') have no "
+                "fetch adapter yet: they are a different physical product "
+                "from sea-ice concentration, so they are never routed to "
+                "NSIDC. The description parsed fine; asking for 'sea ice' "
+                "in a polar region (Arctic Ocean, Southern Ocean) routes "
+                "to the NSIDC Sea Ice Index instead."
+            ),
+            region_key=region_key,
+            variable=variable,
+            kind="no_adapter",
+        )
+    if variable == "sea-ice" and source != "nsidc":
+        return FetchPlan(
+            fetchable=False,
+            reason=(
+                f"Sea ice is only fetchable in the polar regions via NSIDC "
+                f"G02135 — region '{region_key}' is outside the product's "
+                "ice domain (north of 30.98°N / south of 39.23°S). The "
+                "description parsed fine; try 'Arctic Ocean sea ice' or "
+                "'Southern Ocean sea ice'."
+            ),
+            region_key=region_key,
+            variable=variable,
+            kind="no_adapter",
+        )
+
     # Active fires (survey-viz >= 0.5.0, survey-currents >= 0.6.0):
     # fetchable in ANY region — the FIRMS area API is global, so no
     # region-key check applies. ``burn-scar`` is refused honestly here:
@@ -277,6 +326,36 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             region_key=region_key,
             variable=variable,
             source="firms",
+        )
+
+    # NSIDC sea ice (survey-viz >= 0.6.0, survey-currents >= 0.7.0):
+    # fetchable in the polar regions — viz.sources.default_source only
+    # routes "nsidc" there, so reaching this branch means the region is
+    # in the product's ice domain. ``land-ice`` never reaches this
+    # branch (refused above); an explicit nsidc pin on another variable
+    # is refused as a bad variable.
+    if source == "nsidc":
+        if variable != "sea-ice":
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Source 'nsidc' only serves the 'sea-ice' variable; "
+                    f"got variable '{variable}'."
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
+        return FetchPlan(
+            fetchable=True,
+            reason=(
+                f"Region '{region_key}' is fetchable via "
+                f"{SOURCE_LABELS['nsidc']} (variable '{variable}', "
+                "source 'nsidc')."
+            ),
+            region_key=region_key,
+            variable=variable,
+            source="nsidc",
         )
 
     if not is_fetchable(region_key):
@@ -437,7 +516,10 @@ def _field_to_dict(field: Any) -> Dict[str, Any]:
     adapted through its ``to_density_grid()`` — daily fire-count grids in
     the dict shape, so rendering works with zero renderer changes;
     per-detection point markers are a future renderer feature and are
-    deliberately not half-plumbed.
+    deliberately not half-plumbed. A survey-currents ``IceField``
+    (NSIDC G02135 sea ice, survey-currents >= 0.7.0) needs no
+    adaptation: its 3D ``values`` (percent concentration, NaN for
+    land/missing) flow through the generic attribute path unchanged.
     """
 
     # FireField (NASA FIRMS active fires): bin detections into daily
@@ -688,6 +770,35 @@ def run_pipeline(
             ) from exc
         series = None
         fetch_key = "firms"
+    elif source == "nsidc":
+        # NSIDC G02135 daily sea-ice concentration: fetch_nsidc_sic(bbox,
+        # start, end, stride_days=...) on the spec bbox directly — the
+        # polar grids are hemispheric, nothing to clamp. series=None:
+        # there is no lake-average equivalent; render_viz shows a
+        # placeholder chart panel. _field_to_dict adapts the IceField
+        # via its 3D ``values`` (percent, NaN for land/missing).
+        label = SOURCE_LABELS[source]
+        report(0.05, f"Fetching {label} sea-ice concentration grid…")
+        fetch_fn = getattr(peers, "fetch_nsidc", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                "Source 'nsidc' needs survey-currents>=0.7.0 with the "
+                "NSIDC sea-ice adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        try:
+            field = fetch_fn(
+                tuple(spec.bbox), spec.start, spec.end,
+                stride_days=stride_days)
+        except Exception as exc:
+            raise RuntimeError(
+                f"NSIDC fetch failed ({type(exc).__name__}: {exc}). "
+                "Check the network connection — the archive is keyless "
+                "HTTPS (no account needed), so this is usually a "
+                "connectivity or date-range issue."
+            ) from exc
+        series = None
+        fetch_key = "nsidc"
     else:
         # Global SST (OISST/MUR): fetch on the spec bbox directly — the
         # global grids have no lake bounds to clamp to — and render with

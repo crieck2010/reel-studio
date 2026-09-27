@@ -239,7 +239,7 @@ def _fake_import_fires(name, *a, **k):
             GLSEA_LON_MIN=-93.0, GLSEA_LAT_MIN=41.0,
             GLSEA_LON_MAX=-76.0, GLSEA_LAT_MAX=49.0)
     if name in ("viz.sources", "currents.sst_global", "currents.era5",
-                "currents.currents_global"):
+                "currents.currents_global", "currents.sea_ice"):
         raise ImportError(f"No module named {name!r} (simulated old peer)")
     import importlib
     return importlib.import_module(name, *a, **k)
