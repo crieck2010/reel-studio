@@ -248,7 +248,8 @@ def _fake_import_blackmarble(name, *a, **k):
     if name in ("viz.sources", "currents.sst_global", "currents.era5",
                 "currents.currents_global", "currents.fires",
                 "currents.sea_ice", "currents.imerg", "currents.basemaps", "currents.storms",
-                "currents.grace", "currents.streamgages"):
+                "currents.grace", "currents.streamgages",
+                "currents.oceancolor"):
         raise ImportError(f"No module named {name!r} (simulated old peer)")
     import importlib
     return importlib.import_module(name, *a, **k)

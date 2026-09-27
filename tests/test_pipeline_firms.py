@@ -242,7 +242,8 @@ def _fake_import_fires(name, *a, **k):
                 "currents.currents_global", "currents.sea_ice",
                 "currents.imerg",
                 "currents.blackmarble", "currents.basemaps", "currents.storms",
-                "currents.grace", "currents.streamgages"):
+                "currents.grace", "currents.streamgages",
+                "currents.oceancolor"):
         raise ImportError(f"No module named {name!r} (simulated old peer)")
     import importlib
     return importlib.import_module(name, *a, **k)

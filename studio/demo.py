@@ -2,8 +2,10 @@
 
 No network, no LLM key, no ffmpeg needed — this only exercises the
 deterministic survey-viz parser plus reel-studio's fetch planning. The
-third example (Gulf of Mexico) demonstrates the honest unfetchable-region
-path: it parses fine, but has no fetch adapter yet.
+third example (Gulf of Mexico sea level) demonstrates the honest
+unfetchable path: it parses fine, but has no fetch adapter yet
+(satellite altimetry is a different observable from anything the
+adapters serve).
 
 Usage:  python -m studio.demo
 """
@@ -18,7 +20,7 @@ from typing import Optional, TextIO
 DEMO_DESCRIPTIONS = [
     "surface water temperature oscillation on Lake Superior for the past 10 years",
     "Lake Michigan water temperature last summer",
-    "chlorophyll in the Gulf of Mexico 2020 to 2022",
+    "sea level in the Gulf of Mexico 2020 to 2022",
 ]
 
 #: Fixed reference date so the demo output is deterministic.

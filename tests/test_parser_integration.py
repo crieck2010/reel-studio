@@ -20,7 +20,7 @@ TODAY = _dt.date(2026, 9, 26)
 DESCRIPTIONS = [
     "surface water temperature oscillation on Lake Superior for the past 10 years",
     "Lake Michigan water temperature last summer",
-    "chlorophyll in the Gulf of Mexico 2020 to 2022",
+    "sea level in the Gulf of Mexico 2020 to 2022",
 ]
 
 
@@ -75,7 +75,7 @@ def test_demo2_fetchable():
 def test_demo3_parses_but_not_fetchable():
     spec = parse(DESCRIPTIONS[2])
     assert spec.region_key == "gulf-of-mexico"
-    assert spec.variable == "chlorophyll"
+    assert spec.variable == "sea-level"
     assert (spec.start, spec.end) == (_dt.date(2020, 1, 1), _dt.date(2022, 12, 31))
     assert viz.is_fetchable(spec.region_key) is False
 
@@ -87,7 +87,7 @@ def test_demo3_plan_names_missing_adapter():
     assert plan.fetchable is False
     assert plan.kind == "no_adapter"
     assert "no fetch adapter" in plan.reason
-    assert "gulf-of-mexico" in plan.reason
+    assert plan.region_key == "gulf-of-mexico"
 
 
 def test_demo3_run_pipeline_refuses_without_network():

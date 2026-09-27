@@ -133,6 +133,7 @@ SOURCE_LABELS = {
     "ibtracs": "NOAA IBTrACS v04r01",
     "grace": "CSR GRACE/GRACE-FO RL06.3",
     "usgs": "USGS Water Services (NWIS)",
+    "oceancolor": "NOAA CoastWatch Ocean Color",
 }
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
@@ -381,6 +382,37 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             region_key=region_key,
             variable=variable,
             source="usgs",
+        )
+    # Ocean color (survey-viz >= 0.13.0, survey-currents >= 0.14.0):
+    # routable from ANY region — the NOAA CoastWatch L3 grids are
+    # global, so no region-key check applies. Cloud-covered frames
+    # are honest gaps (never interpolated), which the planner notes
+    # because a reel in a persistently cloudy window can be mostly
+    # NO OBSERVATION panels.
+    if source == "oceancolor":
+        if variable != "ocean-color":
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Source 'oceancolor' only serves the 'ocean-color' "
+                    f"variable; got variable '{variable}'."
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
+        return FetchPlan(
+            fetchable=True,
+            reason=(
+                f"Region '{region_key}' is routable via "
+                f"{SOURCE_LABELS['oceancolor']} (variable '{variable}', "
+                "source 'oceancolor'). Chlorophyll-a is keyless via "
+                "NOAA CoastWatch ERDDAP; cloud-covered frames render as "
+                "NO OBSERVATION panels, never interpolated."
+            ),
+            region_key=region_key,
+            variable=variable,
+            source="oceancolor",
         )
     # Sea level (survey-viz >= 0.11.0) is refused honestly here: no
     # adapter exists, so it is never answered with a GRACE map.
@@ -1107,6 +1139,64 @@ def _fetch_streamflow_context(peers: Any, overlays: List[str],
     return _fetch_storm_context(peers, ["tp"], spec, 24)
 
 
+def _fetch_oceancolor_context(peers: Any, context: List[str], spec: Any,
+                              stride_days: int) -> Dict[str, Dict[str, Any]]:
+    """Fetch best-effort companion data for an ocean-color reel; ``{}`` on failure.
+
+    ``context`` comes from the viz spec: ``("currents",)`` for "bloom
+    with ocean currents" wordings, ``("sst",)`` for "bloom conditions"
+    / "chlorophyll vs temperature" wordings. Each companion is fetched
+    on the spec bbox and window — OSCAR (Earthdata) preferred for
+    currents with CMEMS as the peer-order fallback, OISST preferred
+    for SST with MUR as the fallback — matching the pipeline's normal
+    source ordering for those variables. Context is best-effort: a
+    missing peer, missing credentials, or a failed download degrades
+    gracefully to a recorded ``"absent"`` status — the main
+    ocean-color reel never fails because a context dataset is
+    unavailable. The results land in the reel provenance under
+    ``fetch["oceancolor_context"]`` (the renderer also records
+    ``spec.context`` in its own manifest).
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    for name in context:
+        name = str(name).strip().lower()
+        if name == "currents":
+            if getattr(peers, "fetch_oscar", None) is not None:
+                fetch_fn, ctx_source = peers.fetch_oscar, "oscar"
+            else:
+                fetch_fn = getattr(peers, "fetch_cmems_currents", None)
+                ctx_source = "cmems-currents"
+        elif name == "sst":
+            if getattr(peers, "fetch_oisst", None) is not None:
+                fetch_fn, ctx_source = peers.fetch_oisst, "oisst"
+            else:
+                fetch_fn = getattr(peers, "fetch_mur", None)
+                ctx_source = "mur"
+        else:
+            out[name] = {"fetched": False, "status": "absent",
+                         "reason": f"unknown context '{name}'"}
+            continue
+        if fetch_fn is None:
+            out[name] = {"fetched": False, "status": "absent",
+                         "reason": f"no {ctx_source} peer configured"}
+            continue
+        try:
+            field = fetch_fn(tuple(spec.bbox), spec.start, spec.end,
+                             stride_days=stride_days)
+        except Exception as exc:
+            out[name] = {"fetched": False, "status": "absent",
+                         "reason": f"{type(exc).__name__}: {exc}"}
+            continue
+        out[name] = {
+            "fetched": True,
+            "status": "ok",
+            "source": ctx_source,
+            "n_times": len(getattr(field, "times", []) or []),
+            "provenance": dict(getattr(field, "provenance", {}) or {}),
+        }
+    return out
+
+
 def _series_to_dict(series: Any) -> Optional[Dict[str, Any]]:
     """Adapt a survey-currents LakeSeries to survey-viz's duck-typed series.
 
@@ -1142,7 +1232,8 @@ def run_pipeline(
             with ``is_fetchable``, ``resolve_source`` (optional),
             ``fetch_sst``, ``fetch_averages``, ``fetch_oisst``,
             ``fetch_mur``, ``fetch_era5``, ``fetch_oscar``,
-            ``fetch_cmems_currents`` (optional), ``render_viz``,
+            ``fetch_cmems_currents`` (optional), ``fetch_oceancolor``
+            (optional), ``render_viz``,
             ``render_video``.
         out_dir: working directory for frames + the MP4 (created if needed).
         progress: optional ``(fraction, message)`` callback.
@@ -1178,6 +1269,11 @@ def run_pipeline(
     # -- 1. fetch -----------------------------------------------------------
     clamp_notes: List[str] = []
     fetch_key = "sst"
+    # Ocean-color context companions (currents / sst) land here; the
+    # oceancolor execution branch fills it via _fetch_oceancolor_context
+    # and the provenance builder records it under
+    # fetch["oceancolor_context"].
+    oceancolor_context: Dict[str, Dict[str, Any]] = {}
     # Storm tracks bypass the scalar-grid adapter: the ibtracs branch
     # sets render_dict to the StormField's to_dict() form, which
     # render_viz (survey-viz >= 0.10.0) draws as track polylines.
@@ -1574,6 +1670,68 @@ def run_pipeline(
                 render_dict["overlay_grids"] = context
         series = None
         fetch_key = "usgs"
+    elif source == "oceancolor":
+        # Ocean color (survey-viz >= 0.13.0, survey-currents >= 0.14.0):
+        # fetch_oceancolor(bbox, start, end, cadence=..., sensor=...)
+        # on the spec bbox directly — the CoastWatch L3 grids are
+        # global, nothing to clamp. series=None: there is no
+        # spatial-average equivalent; render_viz shows a placeholder
+        # chart panel. The OceanColorField goes to render_viz as its
+        # to_dict() form (never through _field_to_dict, which only
+        # understands CurrentField's u/v pair) with times normalized
+        # to date strings first (the adapter emits full ISO datetimes,
+        # which viz's date coercion cannot parse — same treatment as
+        # the glsea/oisst fields). survey-viz >= 0.13.0 draws
+        # log-scaled chlorophyll-a maps from the "values" key, with
+        # all-NaN frames rendered as NO OCEAN COLOR OBSERVATION panels
+        # (never interpolated) and the manifest carrying log_scale +
+        # gap_frames. Requested context ("… with ocean currents" /
+        # "… vs temperature") is fetched as best-effort companion data
+        # and recorded in the reel provenance; unavailable context
+        # degrades gracefully.
+        label = SOURCE_LABELS[source]
+        report(0.05, f"Fetching {label} chlorophyll-a grid…")
+        fetch_fn = getattr(peers, "fetch_oceancolor", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                "Source 'oceancolor' needs survey-currents>=0.14.0 with the "
+                "ocean-color adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        # The viz spec cadence is "daily"/"monthly"/"yearly"; the
+        # adapter takes "daily"/"weekly"/"monthly" (yearly is refused
+        # there). "weekly" can only come from an explicit API call.
+        oc_cadence = {"daily": "daily", "weekly": "weekly"}.get(
+            str(getattr(spec, "cadence", "monthly")), "monthly")
+        try:
+            # Default to MODIS Aqua R2022 (the survey-currents
+            # fetch_oceancolor default) unless the spec pins a sensor.
+            field = fetch_fn(
+                tuple(spec.bbox), spec.start, spec.end,
+                cadence=oc_cadence,
+                sensor=getattr(spec, "sensor", None) or "modis-aqua")
+        except Exception as exc:
+            raise RuntimeError(
+                f"Ocean color fetch failed ({type(exc).__name__}: {exc}). "
+                "Check the network connection and that the NOAA CoastWatch "
+                "ERDDAP service is up (it occasionally returns 502/503 "
+                "during outages)."
+            ) from exc
+        render_dict = (field.to_dict() if hasattr(field, "to_dict")
+                       else field)
+        if isinstance(render_dict, dict):
+            render_dict = dict(render_dict)
+            render_dict["times"] = [
+                _time_to_date_str(t)
+                for t in render_dict.get("times", [])]
+        context = [str(c) for c in
+                   (getattr(spec, "context", None) or ())]
+        if context:
+            report(0.25, "Fetching ocean-color context datasets…")
+            oceancolor_context = _fetch_oceancolor_context(
+                peers, context, spec, stride_days)
+        series = None
+        fetch_key = "oceancolor"
     else:
         # Global SST (OISST/MUR): fetch on the spec bbox directly — the
         # global grids have no lake bounds to clamp to — and render with
@@ -1636,9 +1794,13 @@ def run_pipeline(
             # for active fires, "nsidc" for sea ice, "imerg" for
             # precipitation, "blackmarble" for night lights, "gebco" for
             # topography, "ibtracs" for storm tracks, "grace" for
-            # terrestrial water storage, "usgs" for streamgages (the field
-            # provenance carries the source-specific payload).
+            # terrestrial water storage, "usgs" for streamgages,
+            # "oceancolor" for ocean color (the field provenance carries
+            # the source-specific payload).
             fetch_key: dict(getattr(field, "provenance", {}) or {}),
+            # Ocean-color context companions (currents / sst), only
+            # populated for source "oceancolor".
+            "oceancolor_context": oceancolor_context,
             "averages": dict(getattr(series, "provenance", {}) or {}),
             "bbox_clamp_notes": clamp_notes,
         },
