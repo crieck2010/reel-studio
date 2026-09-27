@@ -26,7 +26,7 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
     "survey-currents": {
         "module": "currents",
         "pip": "pip install git+https://github.com/crieck2010/survey-currents.git",
-        "needed_for": "fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages), global OISST/MUR (fetch_oisst, fetch_mur), ERA5 atmosphere (fetch_era5), global currents (fetch_oscar, fetch_cmems_currents)",
+        "needed_for": "fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages), global OISST/MUR (fetch_oisst, fetch_mur), ERA5 atmosphere (fetch_era5), global currents (fetch_oscar, fetch_cmems_currents), NASA FIRMS active fires (fetch_firms)",
     },
     "survey-animate": {
         "module": "animate",
@@ -103,8 +103,9 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
 
     # Source routing (survey-viz >= 0.2.0), the global-SST adapters
     # (survey-currents >= 0.3.0), the ERA5 atmosphere adapter
-    # (survey-currents >= 0.4.0), and the global-currents adapters
-    # (survey-currents >= 0.5.0) are optional: older peers simply lack
+    # (survey-currents >= 0.4.0), the global-currents adapters
+    # (survey-currents >= 0.5.0), and the FIRMS active-fire adapter
+    # (survey-currents >= 0.6.0) are optional: older peers simply lack
     # them, and the pipeline falls back to the legacy paths.
     try:
         viz_sources = importlib.import_module("viz.sources")
@@ -122,6 +123,10 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         currents_global = importlib.import_module("currents.currents_global")
     except ImportError:
         currents_global = None
+    try:
+        fires = importlib.import_module("currents.fires")
+    except ImportError:
+        fires = None
 
     return types.SimpleNamespace(
         parse_description=viz.parse_description,
@@ -138,6 +143,7 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         fetch_oscar=(currents_global.fetch_oscar if currents_global else None),
         fetch_cmems_currents=(currents_global.fetch_cmems_currents
                               if currents_global else None),
+        fetch_firms=(fires.fetch_firms if fires else None),
         # GLSEA grid bounds (lon_min, lat_min, lon_max, lat_max); the pipeline
         # clamps spec bboxes into this window before fetching, because the
         # lake-superior gazetteer bbox starts slightly west of the grid floor.

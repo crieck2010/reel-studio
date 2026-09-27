@@ -42,9 +42,18 @@ ERA5_VARIABLES = ("wind", "msl", "t2m", "tp")
 #: honest refusal).
 CURRENTS_VARIABLES = ("currents",)
 
+#: The active-fire variable (NASA FIRMS via ``currents.fires``,
+#: survey-currents >= 0.6.0). Fetchable in any region — the FIRMS area
+#: API is global. ``burn-scar`` is deliberately NOT in this list: it
+#: parses (survey-viz >= 0.5.0) but has no fetch adapter, because FIRMS
+#: is active-fire detections only and burn-scar mapping is
+#: survey-burn's future imagery domain — plan_fetch refuses it
+#: honestly, naming survey-burn.
+FIRE_VARIABLES = ("fire",)
+
 #: Variables with a fetch adapter: SST + the ERA5 atmosphere set +
-#: currents.
-SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES
+#: currents + active fires.
+SUPPORTED_VARIABLES = (SST_VARIABLE,) + ERA5_VARIABLES + CURRENTS_VARIABLES + FIRE_VARIABLES
 
 #: Region keys of the 5 Great Lakes (currents have no adapter there).
 GREAT_LAKES_KEYS = frozenset(FETCHABLE_REGION_TO_LAKE)
@@ -57,6 +66,7 @@ SOURCE_LABELS = {
     "era5": "Copernicus ERA5 (CDS)",
     "oscar": "NASA PODAAC OSCAR v2.0",
     "cmems-currents": "CMEMS Global Ocean Physics (daily)",
+    "firms": "NASA FIRMS",
 }
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
@@ -223,6 +233,52 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             source=source,
         )
 
+    # Active fires (survey-viz >= 0.5.0, survey-currents >= 0.6.0):
+    # fetchable in ANY region — the FIRMS area API is global, so no
+    # region-key check applies. ``burn-scar`` is refused honestly here:
+    # FIRMS is active-fire detections only; burn-scar mapping is
+    # survey-burn's future imagery adapter, so we name it instead of
+    # misrouting to fire detections.
+    if source == "firms":
+        if variable == "burn-scar":
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    "FIRMS only serves ACTIVE fire detections "
+                    "(variable 'fire'); 'burn-scar' (burned area / burn "
+                    "severity mapping) has no fetch adapter yet — the "
+                    "imagery-based burn-scar product belongs to survey-burn "
+                    "(future). The description parsed fine; asking for "
+                    "'wildfire', 'burning', or 'fire' instead routes to "
+                    "NASA FIRMS detections."
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="no_adapter",
+            )
+        if variable != "fire":
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Source 'firms' only serves the 'fire' variable; "
+                    f"got variable '{variable}'."
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
+        return FetchPlan(
+            fetchable=True,
+            reason=(
+                f"Region '{region_key}' is fetchable via "
+                f"{SOURCE_LABELS['firms']} (variable '{variable}', "
+                "source 'firms')."
+            ),
+            region_key=region_key,
+            variable=variable,
+            source="firms",
+        )
+
     if not is_fetchable(region_key):
         return FetchPlan(
             fetchable=False,
@@ -376,8 +432,21 @@ def _field_to_dict(field: Any) -> Dict[str, Any]:
     survey-currents ``CurrentField`` (3D ``u``/``v``) is adapted to the
     scalar current speed ``sqrt(u^2+v^2)`` — no quiver/streamline/particle
     rendering here; that is the survey-flow renderer's job (and it
-    matches survey-viz >= 0.4.0's own renderer).
+    matches survey-viz >= 0.4.0's own renderer). A survey-currents
+    ``FireField`` (NASA FIRMS active fires, survey-currents >= 0.6.0) is
+    adapted through its ``to_density_grid()`` — daily fire-count grids in
+    the dict shape, so rendering works with zero renderer changes;
+    per-detection point markers are a future renderer feature and are
+    deliberately not half-plumbed.
     """
+
+    # FireField (NASA FIRMS active fires): bin detections into daily
+    # count grids via to_density_grid() and re-enter through the
+    # plain-dict path below. The hasattr guard must come before the
+    # getattr fallbacks, which would otherwise misread the point field.
+    if hasattr(field, "to_density_grid") and callable(field.to_density_grid):
+        return _field_to_dict(field.to_density_grid())
+
     def _overlay_dict(src: Any) -> Dict[str, Any]:
         ov = None
         if isinstance(src, dict):
@@ -591,6 +660,34 @@ def run_pipeline(
             ) from exc
         series = None
         fetch_key = source
+    elif source == "firms":
+        # NASA FIRMS active fires: fetch_detections(bbox, start, end) on
+        # the spec bbox directly — the area API is global, nothing to
+        # clamp. series=None: there is no lake-average equivalent;
+        # render_viz shows a placeholder chart panel. _field_to_dict
+        # adapts the FireField via to_density_grid() (daily fire-count
+        # grids in the render dict form).
+        label = SOURCE_LABELS[source]
+        report(0.05, f"Fetching {label} active-fire detections…")
+        fetch_fn = getattr(peers, "fetch_firms", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                "Source 'firms' needs survey-currents>=0.6.0 with the FIRMS "
+                "adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        try:
+            field = fetch_fn(
+                tuple(spec.bbox), spec.start, spec.end)
+        except Exception as exc:
+            raise RuntimeError(
+                f"FIRMS fetch failed ({type(exc).__name__}: {exc}). "
+                "Check the network connection, and that a free NASA FIRMS "
+                "MAP_KEY is set (FIRMS_MAP_KEY env var or the map_key "
+                "argument — https://firms.modaps.eosdis.nasa.gov/api/area/)."
+            ) from exc
+        series = None
+        fetch_key = "firms"
     else:
         # Global SST (OISST/MUR): fetch on the spec bbox directly — the
         # global grids have no lake bounds to clamp to — and render with

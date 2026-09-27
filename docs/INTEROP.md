@@ -111,6 +111,26 @@ four lakes' bboxes already fit the grid.
   — current overlay plumbing is contour-only (see survey-viz CHANGELOG
   0.4.0).
 
+## Fires contract (survey-viz 0.5.0 / survey-currents 0.6.0)
+
+* `wire_peers` exposes `fetch_firms` lazily (None when
+  survey-currents < 0.6.0 — the pipeline then raises the honest upgrade
+  message naming `survey-currents>=0.6.0`).
+* `run_pipeline` calls `fetch_firms(bbox, start, end)` (no stride — the
+  FIRMS API returns daily detections by construction) with `series=None`
+  (no lake-average equivalent; the chart panel shows a placeholder).
+  Provenance key is `fetch["firms"]` (the FireField provenance carries
+  the MAP_KEY-free retrieval record).
+* `plan_fetch` routes `firms` (the source comes from
+  `viz.sources.resolve_source` on survey-viz >= 0.5.0: any region,
+  variable `fire` → `firms`). `burn-scar` is refused honestly here:
+  FIRMS is active-fire *detections* only; the refusal names survey-burn
+  as the future imagery adapter instead of misrouting to detections.
+* `_field_to_dict` adapts a survey-currents `FireField` via its
+  `to_density_grid()` (daily fire-count grids in the render dict shape)
+  — zero renderer changes; per-detection point markers are deliberately
+  deferred to a future renderer version, not half-plumbed.
+
 ## ERA5 contract (survey-viz 0.3.0 / survey-currents 0.4.0)
 
 * `wire_peers` exposes `fetch_era5` (None when survey-currents < 0.4.0 —
