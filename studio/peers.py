@@ -1,12 +1,15 @@
 """Optional peer imports with graceful degradation.
 
-The three peers are separate packages, installed from their own GitHub
+The four peers are separate packages, installed from their own GitHub
 repos. Nothing in reel-studio hard-imports them: :func:`load_peers`
 tries each one and records what is missing, :func:`require_peer` raises
 a :class:`MissingPeerError` whose message names the exact
 ``pip install git+https://...`` command that fixes it, and
 :func:`wire_peers` builds the callables namespace that
-:mod:`studio.pipeline` runs against.
+:mod:`studio.pipeline` runs against. survey-layout is the optional
+fourth peer: it is never *required* (the legacy 1080×1920 layout always
+works), and the pipeline raises :class:`PeerTooOldError` with its
+install command only when a non-legacy platform is requested.
 """
 
 from __future__ import annotations
@@ -32,6 +35,13 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
         "module": "animate",
         "pip": "pip install git+https://github.com/crieck2010/survey-animate.git",
         "needed_for": "MP4 encoding (render_video)",
+    },
+    "survey-layout": {
+        "module": "layout",
+        "pip": "pip install git+https://github.com/crieck2010/survey-layout.git",
+        "needed_for": "platform aspect ratios + safe-zone canvases for frame "
+                      "rendering (layout.to_viz_canvas, consumed by "
+                      "survey-viz >= 0.18.0's render_viz canvas=)",
     },
 }
 
@@ -98,6 +108,15 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
     viz = require_peer(statuses, "survey-viz")
     currents = require_peer(statuses, "survey-currents")
     animate = require_peer(statuses, "survey-animate")
+
+    # survey-layout is the optional fourth peer: platform canvases only
+    # exist when it is installed, so it is deliberately NOT required —
+    # the pipeline raises PeerTooOldError with the install command only
+    # when a non-legacy platform is actually requested.
+    try:
+        layout = importlib.import_module("layout")
+    except ImportError:
+        layout = None
 
     glsea = importlib.import_module("currents.glsea")
 
@@ -209,4 +228,12 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         # None on older peers, which the pipeline turns into a
         # PeerTooOldError only when motion is actually requested.
         MotionSpec=getattr(animate, "MotionSpec", None),
+        # survey-layout is optional (see above): the callables are None
+        # when it is missing, and the pipeline raises PeerTooOldError
+        # with the install command only on actual use.
+        layout=layout,
+        to_viz_canvas=(layout.to_viz_canvas if layout else None),
+        get_platform=(layout.get_platform if layout else None),
+        list_platforms=(layout.list_platforms if layout else None),
+        layout_pip=PEER_SPECS["survey-layout"]["pip"],
     )

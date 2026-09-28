@@ -10,7 +10,7 @@ build (documented in docs/INTEROP.md):
   2. GlseaField.times are ISO *datetimes*, which viz's date coercion
      cannot parse, so the pipeline normalizes them to date-only strings.
 
-Skipped when any of the three peers is not installed/importable.
+Skipped when any of the four peers is not installed/importable.
 """
 
 from __future__ import annotations

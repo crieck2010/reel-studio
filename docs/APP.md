@@ -13,7 +13,7 @@ thin studio layer over three engines:
 * **survey-animate** — frame → MP4 encoder (`render_video`, resolves
   ffmpeg itself)
 
-## The 6-step flow
+## The 7-step flow
 
 ### Step 1 — Describe and parse
 
@@ -29,7 +29,22 @@ parser (no AI, no network) and shows the resulting `VizSpec` as JSON —
 for confirmation. If the parser can't handle the description you get a
 clear error with examples that do parse.
 
-### Step 2 — Aesthetics
+### Step 2 — Platform
+
+Pick where the reel will be posted — TikTok, Instagram Reels,
+YouTube Shorts, X portrait, square, or widescreen. The frame size and
+the title/map/chart/caption/footer regions follow the platform's
+aspect ratio and measured safe zones, shown as a schematic with the
+platform's interface chrome (top navigation/status, right action
+rail, bottom captions/channel/progress) shaded red and labeled in
+plain words. The measurements are community-measured
+approximations, not official platform specs. Earthquake reels get the
+`quake` layout flavor (largest-events ranking panel) automatically;
+everything else gets `standard`. Needs survey-layout + survey-viz ≥
+0.18.0; without them the step offers only the legacy 1080×1920
+layout and claims no safe-zone support.
+
+### Step 3 — Aesthetics
 
 Style the reel before it runs:
 
@@ -72,7 +87,7 @@ colors even when a reference suggests a colormap. Needs
 survey-viz ≥ 0.16.0 — with an older peer the app says so and does
 nothing.
 
-### Step 3 — Cinematic motion & audio
+### Step 4 — Cinematic motion & audio
 
 **Cinematic camera motion** (optional, needs survey-animate ≥ 0.2.0):
 check *Enable cinematic camera motion*, then set zoom (in/out/off)
@@ -87,7 +102,7 @@ own audio file — it is muxed under the reel and trimmed to the video
 length (AAC for MP4). Use audio you own or have the rights to. Remove
 it any time with **Remove audio**.
 
-### Step 4 — Batch queue
+### Step 5 — Batch queue
 
 Add several descriptions (one per line) and press **Add to queue**:
 each becomes a job that snapshots your current settings (motion,
@@ -98,7 +113,7 @@ and the queue continues, so completed reels are never lost. Queued
 jobs can be removed with ✕; finished jobs cleared with **Clear
 finished**.
 
-### Step 5 — Run the pipeline
+### Step 6 — Run the pipeline
 
 **Refine in plain language** (optional) — before running, describe the
 changes you want: "zoom in on the Gulf of Mexico", "use a warmer
@@ -120,9 +135,10 @@ status messages, the pipeline:
    Fetchable regions/variables are whatever the installed survey-viz +
    survey-currents support (13 sources as of survey-viz 0.15.0 /
    survey-currents 0.15.2).
-2. **Renders** — survey-viz renders one 1080×1920 PNG per frame
-   (title block, map panel, burned-in timestamp, time-series panel
-   with a playhead) using the aesthetics from step 2.
+2. **Renders** — survey-viz renders one PNG per frame (title block,
+   map panel, burned-in timestamp, time-series panel with a playhead)
+   using the aesthetics from step 3, sized to the platform from step
+   2 — or the historical 1080×1920 frames when no platform is chosen.
 3. **Encodes** — survey-animate encodes the frames to `reel.mp4`
    (H.264, 30 fps, `reel` preset) with a title card and a
    `.provenance.json` sidecar.
@@ -131,14 +147,16 @@ If the region isn't fetchable or the variable isn't supported, you get
 an **honest message naming what's missing** — the app never crashes
 on these paths.
 
-### Step 6 — Take the reel
+### Step 7 — Take the reel
 
 * Embedded video player (`st.video`)
 * **Download MP4** button
 * **Story captions** listing (when captions were generated): each
   caption with its frame range
-* **Provenance** expander: fetch URLs, SHA-256 digests, motion/audio
-  settings, the full spec JSON, frame/manifest paths, encoder details
+* **Platform** line: platform + dimensions (or the legacy layout)
+* **Provenance** expander: fetch URLs, SHA-256 digests, motion/audio/
+  platform settings, the full spec JSON, frame/manifest paths,
+  encoder details
 
 ## The optional LLM assist
 

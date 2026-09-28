@@ -1,6 +1,6 @@
 """pytest configuration: make local peer checkouts importable.
 
-In dev (and in the fresh-clone verification on this machine) the three
+In dev (and in the fresh-clone verification on this machine) the four
 peer repos live as sibling checkouts under ~/workspace. Adding their
 ``src/`` layouts to sys.path lets the integration tests exercise the
 REAL peer code offline. Tests that need a peer use pytest.skip when it

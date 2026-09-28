@@ -17,8 +17,9 @@ inspectable reason it was chosen. No LLM is required at runtime.
 | Repo | Role | Version tested |
 |---|---|---|
 | [survey-currents](https://github.com/crieck2010/survey-currents) | Data-fetch engines for all 13 sources | v0.15.0 |
-| [survey-viz](https://github.com/crieck2010/survey-viz) | Description parser + reel frame renderer | v0.16.0 |
-| [survey-animate](https://github.com/crieck2010/survey-animate) | Frames → MP4 encoder (resolves ffmpeg) | v0.1.0 |
+| [survey-viz](https://github.com/crieck2010/survey-viz) | Description parser + reel frame renderer | v0.18.0 |
+| [survey-animate](https://github.com/crieck2010/survey-animate) | Frames → MP4 encoder (resolves ffmpeg) | v0.2.0 |
+| [survey-layout](https://github.com/crieck2010/survey-layout) | Platform aspect ratios + safe-zone canvases (optional) | v0.1.0 |
 | **reel-studio** (this repo) | Streamlit web app + UI-free pipeline orchestration | — |
 
 ## Supported data sources
@@ -66,11 +67,13 @@ pip install -r requirements.txt
 pip install git+https://github.com/crieck2010/survey-viz.git
 pip install git+https://github.com/crieck2010/survey-currents.git
 pip install git+https://github.com/crieck2010/survey-animate.git
+pip install git+https://github.com/crieck2010/survey-layout.git   # optional: platform layouts
 ```
 
 The app **launches with any peer missing** — the Engine-status panel shows exactly which
 `pip install` command fixes it. Parsing needs survey-viz, fetching needs
-survey-currents, encoding needs survey-animate.
+survey-currents, encoding needs survey-animate; survey-layout unlocks the platform
+step (without it, only the legacy 1080×1920 layout is offered).
 
 ## Run
 
@@ -79,29 +82,42 @@ streamlit run app.py
 ```
 
 Your browser opens to `http://localhost:8501` (paste it manually if it doesn't). The
-4-step flow:
+7-step flow:
 
 1. **Describe** — type a description, press **Parse**. The deterministic parser turns it
    into a `VizSpec`, shown as JSON for confirmation: region, bbox, variable, pinned
    source, the reason that source was chosen, dates, title.
-2. **Aesthetics** — pick Dark/Light style, edit the title, add an optional footer
+2. **Platform** — pick the target platform (TikTok, Instagram Reels, YouTube Shorts,
+   X portrait, square, widescreen). Frame size and the title/map/chart/caption/footer
+   regions follow the platform's aspect ratio and measured safe zones, shown as a
+   schematic with the red interface-chrome zones labeled (needs survey-layout and
+   survey-viz ≥ 0.18.0; without them the legacy 1080×1920 layout is used and no
+   safe-zone support is claimed).
+3. **Aesthetics** — pick Dark/Light style, edit the title, add an optional footer
    caption, toggle the basemap underlay, and choose a colormap (continuous data maps
    only) — or paste a reel URL / upload a screenshot to copy its color mood.
    Press **Apply aesthetics** to store the spec that will run.
-3. **Run** — optionally **Refine in plain language** first ("zoom in on the Gulf of
+4. **Cinematic motion & audio** — set zoom mode/speed, pan direction/speed, and
+   crossfade smoothing; optionally attach your own audio file to mux under the reel
+   (needs survey-animate ≥ 0.2.0).
+5. **Batch queue** — add several descriptions (one per line), each snapshotting your
+   current settings (motion, audio, captions, colormap, platform), and generate them
+   unattended, one after another. A failed job never loses completed ones.
+6. **Run** — optionally **Refine in plain language** first ("zoom in on the Gulf of
    Mexico and use a warmer colormap"), then press **Run**. The pipeline fetches the
    data (progress bar + status messages), renders the frames, and encodes the MP4.
    Anything the stack can't answer gets an honest message naming what's missing —
    no crash.
-4. **Take the reel** — embedded video player, **Download MP4** button, and a
+7. **Take the reel** — embedded video player, **Download MP4** button, story-caption
+   listing when captions were generated, platform + dimensions, and a
    *Provenance* expander with the exact fetch URLs, SHA-256 hashes, and the full spec
    (every frame is reproducible from what's listed there).
 
 ## Updating
 
 No command line needed: double-click **`Update reel-studio.bat`** in the repo folder.
-It git-pulls reel-studio, upgrades the three peer engines (survey-viz, survey-currents,
-survey-animate) — from a local checkout when one sits next to the repo, otherwise
+It git-pulls reel-studio, upgrades the four peer engines (survey-viz, survey-currents,
+survey-animate, survey-layout) — from a local checkout when one sits next to the repo, otherwise
 straight from GitHub — and prints the installed versions for confirmation. Run it any
 time a new release is announced, then launch with the **Reel Studio** desktop icon.
 
@@ -154,12 +170,19 @@ The app works **fully** without the key — it is never required. See
 
 ## What you'll see
 
-* **Engine status** — three badges (survey-viz / survey-currents / survey-animate),
+* **Engine status** — four badges (survey-viz / survey-currents / survey-animate / survey-layout),
   green when installed, amber with the exact install command when missing.
 * **Step 1** — text area with an example description, **Parse** button, then the parsed
   `VizSpec` rendered as JSON (title, `region_key`, `bbox`, `variable`, pinned `source`
   with its selection reason, `start`/`end`, `cadence`).
-* **Step 2 — Aesthetics** — style picker (Dark/Light), title and optional
+* **Step 2 — Platform** — target-platform picker (TikTok, Instagram Reels,
+  YouTube Shorts, X portrait, square, widescreen): aspect ratio, dimensions,
+  and a safe-zone schematic with the platform's interface chrome (top
+  navigation/status, right action rail, bottom captions/channel/progress)
+  shaded red and labeled in plain words. Measurements are community-measured
+  approximations, not official specs. Needs survey-layout + survey-viz ≥
+  0.18.0; without them only the legacy 1080×1920 layout is offered.
+* **Step 3 — Aesthetics** — style picker (Dark/Light), title and optional
   footer-caption inputs, basemap-underlay checkbox, and a colormap picker
   (Automatic + 30 curated names; continuous data maps only — categorical
   products like earthquakes keep their fixed scientific colors). **Apply
@@ -168,26 +191,26 @@ The app works **fully** without the key — it is never required. See
   URL or upload a screenshot to copy its color mood (dark/light style +
   colormap suggestion). **Data-driven story captions** — burn
   peak/trend captions onto the frames (needs survey-viz ≥ 0.17.0).
-* **Step 3 — Cinematic motion & audio** — enable camera motion and set
+* **Step 4 — Cinematic motion & audio** — enable camera motion and set
   zoom mode/speed, pan direction/speed, and crossfade smoothing; attach
   your own audio file to mux under the reel (needs survey-animate ≥
   0.2.0).
-* **Step 4 — Batch queue** — add several descriptions (one per line),
-  each snapshotting your current settings, and generate them
-  unattended, one after another. A failed job never loses completed
-  ones.
-* **Step 5** — **Refine in plain language** ("zoom in on the Gulf of Mexico
+* **Step 5 — Batch queue** — add several descriptions (one per line),
+  each snapshotting your current settings (motion, audio, captions,
+  colormap, platform), and generate them unattended, one after another.
+  A failed job never loses completed ones.
+* **Step 6** — **Refine in plain language** ("zoom in on the Gulf of Mexico
   and use a warmer colormap", "add a slow zoom in during the video"),
   then the **Run** button, progress bar with live status messages
   ("Fetching NOAA GLSEA sea-surface-temperature grid…", "Rendering
   reel frames…", "Encoding MP4…").
-* **Step 6** — embedded video player, **Download MP4** button, story-caption
-  listing when captions were generated, and a *Provenance* expander with
-  fetch URLs, SHA-256 digests, motion/audio settings, and the spec.
+* **Step 7** — embedded video player, **Download MP4** button, story-caption
+  listing when captions were generated, platform + dimensions, and a *Provenance* expander with
+  fetch URLs, SHA-256 digests, motion/audio/platform settings, and the spec.
 
 ## Docs
 
-* [docs/APP.md](docs/APP.md) — user guide (the 3 steps, LLM assist, troubleshooting)
+* [docs/APP.md](docs/APP.md) — user guide (the 7 steps, LLM assist, troubleshooting)
 * [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the code is organized
 * [docs/INTEROP.md](docs/INTEROP.md) — peer contracts + the interop quirks discovered
   during the 13-source build program (read before extending)
@@ -202,7 +225,7 @@ pytest tests/
 The suite covers the UI-free pipeline (`studio/pipeline.py`), the batch
 queue (`studio/batch.py`), peer wiring with graceful degradation, source
 selection, provenance, and the offline demo. Fresh-clone verified
-against the released peers: 275 passed.
+against the released peers: 290 passed.
 
 ## Manual smoke check
 

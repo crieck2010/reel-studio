@@ -17,9 +17,10 @@ from studio import peers, pipeline
 
 # --- load_peers ---------------------------------------------------------------
 
-def test_load_peers_returns_three_statuses():
+def test_load_peers_returns_four_statuses():
     statuses = peers.load_peers()
-    assert set(statuses) == {"survey-viz", "survey-currents", "survey-animate"}
+    assert set(statuses) == {"survey-viz", "survey-currents",
+                             "survey-animate", "survey-layout"}
     for repo, status in statuses.items():
         assert isinstance(status, peers.PeerStatus)
         assert status.repo == repo

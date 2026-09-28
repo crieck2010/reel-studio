@@ -20,7 +20,12 @@ import types
 import numpy as np
 import pytest
 
+import importlib
+
 from studio import pipeline
+
+
+_REAL_IMPORT = importlib.import_module
 from studio.pipeline import (
     UnfetchableRegionError,
     _field_to_dict,
@@ -246,8 +251,7 @@ def _fake_import_sea_ice(name, *a, **k):
                 "currents.grace", "currents.streamgages",
                 "currents.oceancolor", "currents.earthquakes"):
         raise ImportError(f"No module named {name!r} (simulated old peer)")
-    import importlib
-    return importlib.import_module(name, *a, **k)
+    return _REAL_IMPORT(name, *a, **k)
 
 
 def _statuses():

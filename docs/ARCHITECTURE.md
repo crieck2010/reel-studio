@@ -12,7 +12,7 @@ reel-studio/
 │   ├── batch.py           # batch queue: sequential jobs, isolated dirs, failure containment
 │   ├── llm_assist.py      # optional OpenAI-compatible assist (stdlib urllib)
 │   └── demo.py            # offline 3-description demo
-├── tests/                 # 74 pytest tests, fully offline
+├── tests/                 # 290 pytest tests, fully offline
 ├── requirements.txt       # streamlit, numpy, matplotlib, netCDF4 (+ pytest)
 └── docs/
     ├── APP.md             # user guide
@@ -48,7 +48,11 @@ reel-studio/
   `load_peers()` (never raises), `require_peer()` (raises
   `MissingPeerError`), `wire_peers()` (builds the callables namespace:
   parse, is_fetchable, fetch_sst, fetch_averages, render_viz,
-  render_video, plus `glsea_bounds` for bbox clamping).
+  render_video, plus `glsea_bounds` for bbox clamping; `layout`,
+  `to_viz_canvas`, `get_platform`, `list_platforms`, `layout_pip` for
+  the optional survey-layout peer — all None when it is missing, and
+  the pipeline raises `PeerTooOldError` with the install command only
+  on actual use).
 * **`studio/pipeline.py`** — `FetchPlan`/`plan_fetch()`
   (fetchability without network), `region_to_lake()`,
   `parse_with_fallback()` (deterministic parse + optional one-shot LLM
@@ -77,6 +81,15 @@ description text
   → render_viz (viz) → frames/ + manifest.json ──→ frames DIR ──→ render_video (animate)
   → reel.mp4 + .provenance.json + RunResult.provenance
 ```
+
+The platform step (survey-layout) feeds the render stage: `run_pipeline`
+builds `layout.to_viz_canvas(platform, flavor=...)` (flavor `quake` for
+earthquakes, `standard` otherwise) and passes it as
+`render_viz(..., canvas=...)`, so frame dimensions and the
+title/map/chart/caption/footer regions follow the platform's aspect
+ratio and safe zones. `platform=None`/`"legacy"` passes no canvas —
+older survey-viz peers (no `canvas` keyword) keep working untouched,
+and the layout peer is never *required*.
 
 ## Test strategy
 

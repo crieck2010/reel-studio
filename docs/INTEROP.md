@@ -1,8 +1,8 @@
 # reel-studio interop: peer contracts
 
-reel-studio integrates three peer engines. All contracts below were
-verified against the peers' **actual code** (survey-currents v0.2.0,
-survey-viz v0.1.0, survey-animate v0.1.0), not guesses. reel-studio never
+reel-studio integrates four peer engines. All contracts below were
+verified against the peers' **actual code** (survey-currents v0.15.0,
+survey-viz v0.18.0, survey-animate v0.2.0, survey-layout v0.1.0), not guesses. reel-studio never
 hard-imports peers and never imports peer internals beyond the entry
 points listed here.
 
@@ -394,6 +394,39 @@ four lakes' bboxes already fit the grid.
   (`frame_start`/`frame_end`/`text` per event); the app lists them
   under the finished reel. Categorical products keep their fixed
   scientific encodings and record requested-not-applied.
+
+## Platform-canvases contract (survey-layout v0.1.0 / survey-viz v0.18.0)
+
+* `run_pipeline(..., platform="tiktok")` (any key from
+  `layout.list_platforms()`: `tiktok`, `instagram-reel`,
+  `youtube-shorts`, `x-portrait`, `square`, `widescreen`) builds the
+  canvas via `layout.to_viz_canvas(platform, flavor=...)` and passes it
+  as `render_viz(..., canvas=...)`. The layout peer supplies the
+  platform's dimensions, aspect ratio, measured unsafe zones, and the
+  title/map/chart/caption/footer regions; survey-viz consumes the
+  plain duck-typed canvas dict (`platform`, `flavor`, `width`,
+  `height`, `regions`, `unsafe`) with no import of survey-layout.
+* Flavor is chosen from the parsed variable: `"quake"` for
+  `earthquakes` (adds the largest-events ranking panel), `"standard"`
+  otherwise. survey-viz derives the `ranking` region when absent.
+* `platform=None`/`"legacy"` never passes `canvas=`, so older
+  survey-viz peers keep working untouched. When a non-legacy platform
+  is requested but `render_viz` has no `canvas` keyword
+  (survey-viz < 0.18.0), or the survey-layout peer is missing,
+  `PeerTooOldError` is raised with the exact install/upgrade command —
+  a legacy render is never presented as safe-zone-protected.
+* The platform chrome measurements are community-measured
+  approximations versioned as data in survey-layout, not official
+  platform specs; the app says so under the schematic.
+* Provenance: `provenance["render"]["platform"]` (or `"legacy"`),
+  `provenance["render"]["platform_flavor"]`,
+  `provenance["render"]["canvas"]` (`width`/`height`/`regions`, or
+  None); `RunResult.platform` mirrors it.
+* The encode preset follows the canvas: portrait canvases (incl. the
+  4:5 X portrait) encode with survey-animate's `"reel"` preset
+  (1080×1920), square with `"square"`, landscape with `"wide"`; frames
+  are aspect-fit (padding), never stretched. Legacy renders (no canvas)
+  keep `"reel"`. `provenance["encode"]["preset"]` records the choice.
 
 ## Adding a new adapter (future)
 

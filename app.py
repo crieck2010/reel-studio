@@ -38,12 +38,15 @@ except ImportError:  # headless / tests: import still works, main() won't run
 from studio import batch, llm_assist, peers, pipeline
 
 APP_TITLE = "reel-studio"
-APP_VERSION = "0.4.0"
-PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate")
+APP_VERSION = "0.5.0"
+PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate",
+              "survey-layout")
 
 #: Minimum peer versions for the v0.4.0 features.
 MIN_VIZ_STORY = (0, 17, 0)      # story captions + motion refine intents
 MIN_ANIMATE_MOTION = (0, 2, 0)   # cinematic motion + audio muxing
+#: Minimum peer versions for the v0.5.0 platform layouts.
+MIN_VIZ_CANVAS = (0, 18, 0)     # render_viz canvas= (platform canvases)
 
 #: Camera-motion widget options (values are the MotionSpec vocabularies).
 ZOOM_MODES = ("off", "in", "out")
@@ -104,6 +107,7 @@ def _current_run_settings() -> Dict[str, Any]:
         "audio_path": st.session_state.get("audio_path"),
         "story_captions": bool(st.session_state.get("story_captions")),
         "cmap": st.session_state.get("cmap"),
+        "platform": st.session_state.get("platform") or "legacy",
     }
 
 
@@ -180,15 +184,125 @@ def _parse_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     st.json(spec_dict)
 
 
+def _describe_unsafe(rect: tuple) -> str:
+    """Plain-words label for one platform-chrome rectangle.
+
+    Rects are figure fractions (left, bottom, width, height),
+    bottom-left origin. The label names the platform UI that lives
+    there, so the guidance reads like a person, not coordinates.
+    """
+    left, bottom, width, height = (float(v) for v in rect)
+    top = bottom + height
+    spans_width = left < 0.05 and left + width > 0.95
+    right_side = left > 0.7 and width < 0.35
+    if spans_width and top > 0.9:
+        return "Top navigation / status bar — profile, tabs, search"
+    if right_side:
+        return "Right action rail — like, comment, share, follow buttons"
+    if spans_width and bottom < 0.05:
+        return "Bottom captions / channel name / progress bar"
+    return (f"Platform UI overlay "
+            f"({left:.0%}, {bottom:.0%} → {left + width:.0%}, "
+            f"{bottom + height:.0%})")
+
+
+def _safe_zone_schematic(plat) -> str:
+    """HTML schematic: canvas outline with unsafe zones shaded.
+
+    The div keeps the platform's aspect ratio; unsafe rects are drawn
+    with CSS ``bottom`` positioning, matching the rects' bottom-left
+    origin. Pure presentation — geometry comes from the engine.
+    """
+    disp_w = 200
+    disp_h = max(60, round(disp_w * plat.height / plat.width))
+    bands = []
+    for rect in plat.unsafe:
+        left, bottom, width, height = (float(v) for v in rect)
+        bands.append(
+            f'<div style="position:absolute;'
+            f'left:{left * 100:.1f}%;bottom:{bottom * 100:.1f}%;'
+            f'width:{width * 100:.1f}%;height:{height * 100:.1f}%;'
+            f'background:rgba(255,80,80,0.45);'
+            f'border:1px solid rgba(255,80,80,0.8);"></div>')
+    return (
+        f'<div style="position:relative;width:{disp_w}px;height:{disp_h}px;'
+        f'background:#1e1e1e;border:2px solid #888;border-radius:8px;'
+        f'margin:8px 0;">'
+        + "".join(bands) +
+        f'<div style="position:absolute;inset:0;display:flex;'
+        f'align-items:center;justify-content:center;'
+        f'color:#aaa;font-size:12px;">safe area</div></div>')
+
+
+def _platform_step(statuses: Dict[str, peers.PeerStatus]) -> None:
+    """Step 2: platform / aspect-ratio picker + safe-zone guidance.
+
+    Uses the survey-layout peer when installed; without it, only the
+    legacy 1080×1920 layout is offered and no safe-zone support is
+    claimed. The choice is stored in ``st.session_state["platform"]``
+    and read by the run step and the batch snapshot.
+    """
+    st.subheader("2 · Platform")
+    status = statuses["survey-layout"]
+    layout = status.module if status.installed else None
+    if layout is None:
+        st.info(
+            "Platform layouts need the survey-layout engine — install "
+            f"it (`{status.pip_command}`) to unlock TikTok, Instagram "
+            "Reels, YouTube Shorts, X portrait, square, and widescreen. "
+            "The legacy 1080×1920 layout is used in the meantime; "
+            "safe-zone guidance is not shown without the engine.")
+        st.session_state["platform"] = "legacy"
+        return
+
+    keys = list(layout.list_platforms())
+
+    def _label(key: str) -> str:
+        plat = layout.get_platform(key)
+        return f"{plat.label} — {plat.width}×{plat.height} ({plat.aspect})"
+
+    current = st.session_state.get("platform") or "tiktok"
+    choice = st.selectbox(
+        "Platform",
+        options=keys,
+        format_func=_label,
+        index=keys.index(current) if current in keys else 0,
+        help="Frame dimensions follow the platform. Title, map, chart, "
+             "caption, and footer are placed clear of the platform's "
+             "measured interface chrome (red zones below).",
+        key="platform_select",
+    )
+    st.session_state["platform"] = choice
+
+    viz_status = statuses["survey-viz"]
+    if not _version_ok(viz_status, MIN_VIZ_CANVAS):
+        st.warning(_upgrade_hint(viz_status, "0.18.0",
+                                 "Platform aspect ratios") +
+                   " The legacy layout is used until then.")
+
+    plat = layout.get_platform(choice)
+    st.markdown("**Safe zones** — keep content out of the red:",
+                help=None)
+    st.markdown(_safe_zone_schematic(plat), unsafe_allow_html=True)
+    for rect in plat.unsafe:
+        st.caption("🔴 " + _describe_unsafe(rect))
+    if plat.notes:
+        st.caption(plat.notes)
+    st.caption(
+        "Chrome measurements are community-measured approximations, "
+        "not official platform specs — platforms change their UI; "
+        "the engine versions them as data.")
+
+
 def _aesthetics_step(statuses: Dict[str, peers.PeerStatus]) -> None:
-    """Step 2: style / title / caption / underlay / colormap controls.
+    """Step 3: style / title / caption / underlay / colormap controls.
 
     Reads the parsed ``spec_dict`` from session state, lets the user
     tweak the aesthetics, and writes the validated result back on
     "Apply aesthetics". Widget keys embed a hash of the current spec
     so a re-parse always resets the controls to the new spec's values.
     """
-    st.subheader("2 · Aesthetics")
+    st.subheader("3 · Aesthetics")
     spec_dict: Optional[Dict[str, Any]] = st.session_state.get("spec_dict")
     if not spec_dict:
         st.info("Parse a description first (step 1).")
@@ -428,13 +542,13 @@ def _make_assist_fn(statuses: Dict[str, peers.PeerStatus]):
 
 
 def _motion_audio_step(statuses: Dict[str, peers.PeerStatus]) -> None:
-    """Step 3: cinematic camera motion + audio track.
+    """Step 4: cinematic camera motion + audio track.
 
     Motion settings live in ``st.session_state["motion"]`` (a plain
     dict of MotionSpec fields, or ``{}`` when disabled) so the refine
     section and the batch queue can read and merge them.
     """
-    st.subheader("3 · Cinematic motion & audio")
+    st.subheader("4 · Cinematic motion & audio")
     status = statuses["survey-animate"]
     if not _version_ok(status, MIN_ANIMATE_MOTION):
         st.info(_upgrade_hint(status, "0.2.0",
@@ -502,7 +616,7 @@ def _motion_audio_step(statuses: Dict[str, peers.PeerStatus]) -> None:
         st.caption("Current: "
                    f"zoom={motion.get('zoom')}, pan={motion.get('pan')}, "
                    f"smooth={motion.get('smooth')} "
-                   "(refinements in step 5 can change these).")
+                   "(refinements in step 6 can change these).")
 
     st.divider()
     st.markdown("**Audio track** (optional)")
@@ -532,11 +646,11 @@ def _motion_audio_step(statuses: Dict[str, peers.PeerStatus]) -> None:
 
 
 def _batch_step(statuses: Dict[str, peers.PeerStatus]) -> None:
-    """Step 4: batch queue — several descriptions, one unattended run."""
-    st.subheader("4 · Batch queue")
+    """Step 5: batch queue — several descriptions, one unattended run."""
+    st.subheader("5 · Batch queue")
     st.caption("Queue several descriptions and generate them one after "
                "another, unattended. Each job snapshots your current "
-               "settings (motion, audio, captions, colormap) and gets its "
+               "settings (motion, audio, captions, colormap, platform) and gets its "
                "own output folder — a failed job never loses completed "
                "ones.")
 
@@ -667,7 +781,7 @@ def _run_batch(statuses: Dict[str, peers.PeerStatus],
 
 
 def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
-    st.subheader("5 · Run the pipeline")
+    st.subheader("6 · Run the pipeline")
     spec_dict: Optional[Dict[str, Any]] = st.session_state.get("spec_dict")
     if not spec_dict:
         st.info("Parse a description first (step 1).")
@@ -701,7 +815,8 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
             cmap=st.session_state.get("cmap"),
             motion=(st.session_state.get("motion") or None),
             audio_path=st.session_state.get("audio_path"),
-            story_captions=bool(st.session_state.get("story_captions")))
+            story_captions=bool(st.session_state.get("story_captions")),
+            platform=st.session_state.get("platform") or "legacy")
     except (pipeline.UnfetchableRegionError,
             pipeline.UnsupportedVariableError) as exc:
         progress_bar.empty()
@@ -733,6 +848,7 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
         "spec_dict": spec_dict,
         "n_frames": result.n_frames,
         "manifest_path": result.manifest_path,
+        "platform": result.platform,
     }
     _show_result()
 
@@ -743,7 +859,7 @@ def _refine_section(statuses: Dict[str, peers.PeerStatus]) -> None:
     Applies a plain-language follow-up instruction to the parsed spec
     via ``viz.refine_spec`` and shows exactly what changed (plus
     anything not understood). Camera-motion intents (survey-viz >=
-    0.17.0) are merged into the session's motion settings from step 3.
+    0.17.0) are merged into the session's motion settings from step 4.
     Needs survey-viz >= 0.16.0; older peers get the upgrade hint
     instead of a crash.
     """
@@ -789,7 +905,7 @@ def _refine_section(statuses: Dict[str, peers.PeerStatus]) -> None:
             motion.update(motion_delta)
             st.session_state["motion"] = motion
             st.success("Camera-motion settings updated from your "
-                       "instruction — review them in step 3, then press "
+                       "instruction — review them in step 4, then press "
                        "Run below to regenerate the reel.")
         else:
             st.success(f"Applied {len(result.applied)} change(s) — press "
@@ -809,7 +925,7 @@ def _show_result() -> None:
     result = st.session_state.get("result")
     if not result:
         return
-    st.subheader("6 · Your reel")
+    st.subheader("7 · Your reel")
     video_path = result["video_path"]
     st.video(video_path)
     with open(video_path, "rb") as fh:
@@ -821,6 +937,14 @@ def _show_result() -> None:
         )
     st.caption(
         f"{result['n_frames']} frames · sidecar: `{result['sidecar_path']}`")
+    platform = result.get("platform") or "legacy"
+    canvas = ((result.get("provenance") or {}).get("render") or {}
+              ).get("canvas")
+    if canvas:
+        st.caption(f"Platform: **{platform}** — "
+                   f"{canvas['width']}×{canvas['height']}")
+    else:
+        st.caption(f"Platform: **{platform}** (legacy 1080×1920 layout)")
     captions = _caption_events(result.get("manifest_path"))
     if captions:
         with st.expander(f"Story captions ({len(captions)})"):
@@ -861,6 +985,8 @@ def main() -> None:
     _peer_status_panel(statuses)
     st.divider()
     _parse_step(statuses)
+    st.divider()
+    _platform_step(statuses)
     st.divider()
     _aesthetics_step(statuses)
     st.divider()

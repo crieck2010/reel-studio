@@ -843,6 +843,8 @@ class RunResult:
     #: which adapter fetched the data:
     #: "glsea" | "oisst" | "mur" | "era5" | "oscar" | "cmems-currents"
     source: str = ""
+    #: target platform: "legacy" | "tiktok" | "instagram-reel" | ...
+    platform: str = "legacy"
     provenance: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -1305,6 +1307,7 @@ def run_pipeline(
     motion: Optional[Dict[str, Any]] = None,
     audio_path: Optional[str] = None,
     story_captions: bool = False,
+    platform: Optional[str] = None,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1351,6 +1354,20 @@ def run_pipeline(
             survey-viz >= 0.17.0's ``render_viz`` so data-driven
             captions are burned onto the frames and recorded in the
             manifest. Older peers raise :class:`PeerTooOldError`.
+        platform: target distribution platform, e.g. ``"tiktok"``,
+            ``"instagram-reel"``, ``"youtube-shorts"``, ``"x-portrait"``,
+            ``"square"``, ``"widescreen"``. Built into a survey-layout
+            canvas (``layout.to_viz_canvas``) and passed as
+            ``render_viz(..., canvas=...)`` — frame dimensions and the
+            title/map/chart/caption/footer regions follow the platform's
+            aspect ratio and measured safe zones. ``"legacy"`` or
+            ``None`` (default) keeps the historical 1080×1920 layout.
+            The layout flavor is chosen from the parsed variable:
+            ``"quake"`` for earthquakes (adds the largest-events
+            ranking panel), ``"standard"`` otherwise. Needs
+            survey-viz >= 0.18.0 *and* the survey-layout peer;
+            otherwise raises :class:`PeerTooOldError` with the exact
+            install/upgrade command.
 
     Raises:
         UnfetchableRegionError / UnsupportedVariableError: honest,
@@ -1390,6 +1407,30 @@ def run_pipeline(
                 "survey-viz", "story captions (needs >= 0.17.0)",
                 _VIZ_UPGRADE)
         render_viz_kwargs["story_captions"] = True
+
+    # Platform canvas (survey-layout + survey-viz >= 0.18.0): only when
+    # a non-legacy platform is requested, so older peers keep working
+    # untouched. The flavor follows the parsed variable — earthquakes
+    # get the ranking-panel "quake" flavor, everything else "standard".
+    layout_canvas: Optional[Dict[str, Any]] = None
+    layout_flavor: Optional[str] = None
+    if platform is not None and platform != "legacy":
+        if not _supports_kw(peers.render_viz, "canvas"):
+            raise PeerTooOldError(
+                "survey-viz", "platform canvases (needs >= 0.18.0)",
+                _VIZ_UPGRADE)
+        to_viz_canvas = getattr(peers, "to_viz_canvas", None)
+        if to_viz_canvas is None:
+            raise PeerTooOldError(
+                "survey-layout", "platform canvases",
+                getattr(peers, "layout_pip",
+                        "pip install "
+                        "git+https://github.com/crieck2010/survey-layout.git"))
+        layout_flavor = ("quake"
+                         if getattr(spec, "variable", "") == "earthquakes"
+                         else "standard")
+        layout_canvas = to_viz_canvas(platform, flavor=layout_flavor)
+        render_viz_kwargs["canvas"] = layout_canvas
 
     render_video_kwargs: Dict[str, Any] = {}
     motion_spec = None
@@ -1965,10 +2006,23 @@ def run_pipeline(
     # survey-animate's manifest reader only accepts the
     # "survey-flow.frame-manifest/" schema prefix, while survey-viz writes
     # "survey-viz.frame-manifest/1.0" (see docs/INTEROP.md).
+    #
+    # The encode preset follows the canvas: survey-animate's presets fix
+    # the delivered video's dimensions and input frames are aspect-fit
+    # (bilinear rescale + padding, never stretched). Portrait canvases
+    # use "reel" (1080×1920), 1:1 uses "square", landscape uses "wide";
+    # legacy renders (no canvas) stay on "reel" as before.
+    encode_preset = "reel"
+    if layout_canvas is not None:
+        ratio = layout_canvas["width"] / layout_canvas["height"]
+        if abs(ratio - 1.0) < 1e-9:
+            encode_preset = "square"
+        elif ratio > 1.0:
+            encode_preset = "wide"
     report(0.85, "Encoding MP4…")
     video_path = os.path.join(out_dir, "reel.mp4")
     result = peers.render_video(
-        frames_dir, video_path, preset="reel",
+        frames_dir, video_path, preset=encode_preset,
         title=getattr(spec, "title", ""), burn_timestamps_=False,
         **render_video_kwargs)
 
@@ -2000,6 +2054,13 @@ def run_pipeline(
             "manifest_path": manifest_path,
             "n_frames": len(frames),
             "story_captions": story_captions,
+            "platform": platform or "legacy",
+            "platform_flavor": layout_flavor,
+            "canvas": ({
+                "width": layout_canvas["width"],
+                "height": layout_canvas["height"],
+                "regions": sorted(layout_canvas["regions"]),
+            } if layout_canvas else None),
         },
         "encode": {
             "video_path": os.path.abspath(video_path),
@@ -2007,6 +2068,7 @@ def run_pipeline(
             "fps": getattr(result, "fps", None),
             "n_frames": getattr(result, "n_frames", len(frames)),
             "video_sha256": _sha256_file(video_path),
+            "preset": encode_preset,
             "motion": dict(motion) if motion else None,
             "audio_path": (os.path.abspath(audio_path)
                            if audio_path is not None else None),
@@ -2022,5 +2084,6 @@ def run_pipeline(
         spec=provenance["spec"],
         lake=lake,
         source=source,
+        platform=platform or "legacy",
         provenance=provenance,
     )

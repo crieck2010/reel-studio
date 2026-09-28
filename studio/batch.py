@@ -25,7 +25,7 @@ JOB_STATUSES = ("queued", "running", "done", "failed", "skipped")
 #: ``settings`` dict is ignored, so the UI can stash display hints).
 JOB_SETTING_KEYS = (
     "motion", "audio_path", "story_captions", "cmap",
-    "stride_days", "stride_hours",
+    "stride_days", "stride_hours", "platform",
 )
 
 
@@ -39,7 +39,7 @@ class BatchJob:
     """One reel in the queue.
 
     ``settings`` is a snapshot of the run settings at enqueue time
-    (motion/audio/captions/cmap/strides) — later UI changes do not
+    (motion/audio/captions/cmap/platform/strides) — later UI changes do not
     retroactively alter queued jobs.
     """
 

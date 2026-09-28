@@ -2,6 +2,35 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.5.0] - 2026-09-28
+
+### Added
+- **Platform aspect ratios + safe zones** (new step 2, "Platform"):
+  pick the target platform — TikTok, Instagram Reels, YouTube Shorts,
+  X portrait, square, widescreen — and frame size plus the
+  title/map/chart/caption/footer regions follow the platform's aspect
+  ratio and measured safe zones via the new survey-layout peer
+  (`layout.to_viz_canvas`, consumed by survey-viz >= 0.18.0's
+  `render_viz(canvas=...)`). A schematic shades the platform's
+  interface chrome (top navigation/status, right action rail, bottom
+  captions/channel/progress) in red with plain-words labels; the chrome
+  measurements are documented as community-measured approximations,
+  not official platform specs. Earthquake reels automatically use the
+  `quake` layout flavor (largest-events ranking panel); everything else
+  uses `standard`. Needs survey-layout installed and survey-viz >=
+  0.18.0 — otherwise `PeerTooOldError` with the exact install/upgrade
+  command; without the layout peer the platform step offers only the
+  legacy 1080×1920 layout and claims no safe-zone support.
+- `platform` flows through `run_pipeline()`, `RunResult`, batch job
+  settings snapshots, and provenance (`render.platform`,
+  `render.platform_flavor`, `render.canvas` with width/height/regions,
+  `encode.preset`); the encode preset follows the canvas (portrait →
+  survey-animate `"reel"`, square → `"square"`, landscape → `"wide"`;
+  frames are aspect-fit, never stretched); the result step shows
+  platform + dimensions.
+- `Update reel-studio.bat` now upgrades all four peer engines
+  (survey-layout added).
+
 ## [0.4.0] - 2026-09-28
 
 ### Added
