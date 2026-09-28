@@ -18,6 +18,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from studio import caching
+
 #: survey-viz region_key -> survey-currents lake name for
 #: ``fetch_glsea_lake_averages``. Lake-average series only exist for the
 #: 5 Great Lakes; global SST (OISST/MUR) renders with series=None.
@@ -1309,6 +1311,7 @@ def run_pipeline(
     story_captions: bool = False,
     platform: Optional[str] = None,
     style_preset: Optional[str] = None,
+    cache: Any = None,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1373,6 +1376,15 @@ def run_pipeline(
             aesthetics came from (e.g. ``"midnight-ocean"``), or None
             for hand-tuned aesthetics. Recorded in the reel provenance
             only — the styled values already live in ``spec``.
+        cache: optional render cache (a ``cachex.Cache`` from the
+            survey-cache peer, or any duck-typed object with
+            ``put_bytes``/``put_file``/``get_bytes``/``tag``/
+            ``resolve``/``materialize``). When given, the pipeline
+            fingerprints the render inputs (spec, fetched-data
+            digests, render kwargs, canvas, style, peer versions) and
+            reuses cached frames — and fingerprints the encode inputs
+            to reuse cached MP4s — instead of re-rendering. ``None``
+            (default) disables caching; see :mod:`studio.caching`.
 
     Raises:
         UnfetchableRegionError / UnsupportedVariableError: honest,
@@ -2001,10 +2013,43 @@ def run_pipeline(
     report(0.50, "Rendering reel frames…")
     render_field = (render_dict if render_dict is not None
                     else _field_to_dict(field))
-    frames, manifest_path = peers.render_viz(
-        spec, render_field, _series_to_dict(series),
-        out_dir=frames_dir,
-        **render_viz_kwargs)
+    series_dict = _series_to_dict(series)
+    # -- render cache (survey-cache peer, optional) ---------------------------
+    # The frame batch is keyed by a fingerprint of everything that can
+    # change the pixels: the spec, digests of the fetched arrays, the
+    # render kwargs, the platform canvas, the style preset, and the
+    # survey-viz version. A hit skips render_viz entirely.
+    cache_report: Dict[str, Any] = {
+        "enabled": cache is not None,
+        "frame_hit": False,
+        "video_hit": False,
+    }
+    frame_content_keys: List[str] = []
+    batch_key: Optional[str] = None
+    cached_batch = None
+    if cache is not None:
+        spec_dict = (spec.to_dict() if hasattr(spec, "to_dict")
+                     else dict(spec))
+        batch_key = caching.frame_batch_key(
+            spec_dict, render_field, series_dict, render_viz_kwargs,
+            layout_canvas, style_preset, platform)
+        cache_report["batch_tag"] = caching.frames_tag(batch_key)
+        cached_batch = caching.restore_frame_batch(
+            cache, batch_key, frames_dir)
+    if cached_batch is not None:
+        frames, manifest_path, frame_content_keys = cached_batch
+        cache_report["frame_hit"] = True
+        report(0.50,
+               f"Reusing {len(frames)} cached frames — skipping render…")
+    else:
+        frames, manifest_path = peers.render_viz(
+            spec, render_field, series_dict,
+            out_dir=frames_dir,
+            **render_viz_kwargs)
+        if cache is not None and batch_key is not None:
+            record = caching.store_frame_batch(
+                cache, batch_key, frames, manifest_path)
+            frame_content_keys = list(record["frames"])
 
     # -- 3. encode ------------------------------------------------------------
     # NOTE: pass the frames DIRECTORY, not the viz manifest path:
@@ -2026,10 +2071,38 @@ def run_pipeline(
             encode_preset = "wide"
     report(0.85, "Encoding MP4…")
     video_path = os.path.join(out_dir, "reel.mp4")
-    result = peers.render_video(
-        frames_dir, video_path, preset=encode_preset,
-        title=getattr(spec, "title", ""), burn_timestamps_=False,
-        **render_video_kwargs)
+    # -- encode cache: the video is keyed by the frame *content* keys
+    # plus the encode inputs, so an identical reel never re-runs ffmpeg.
+    video_cache_key: Optional[str] = None
+    cached_video_meta = None
+    if cache is not None:
+        audio_content_key = None
+        if audio_path is not None:
+            cachex = caching.cachex_module()
+            if cachex is not None:  # always true: cache came from open_cache
+                audio_content_key = cachex.fingerprint_file(audio_path)
+        video_cache_key = caching.video_key(
+            frame_content_keys, encode_preset,
+            getattr(spec, "title", "") or "",
+            render_video_kwargs, audio_content_key=audio_content_key)
+        cache_report["video_tag"] = caching.video_tag(video_cache_key)
+        cached_video_meta = caching.restore_video(
+            cache, video_cache_key, video_path)
+    if cached_video_meta is not None:
+        cache_report["video_hit"] = True
+        report(0.85, "Reusing cached MP4 — skipping encode…")
+        result = types.SimpleNamespace(**cached_video_meta)
+    else:
+        result = peers.render_video(
+            frames_dir, video_path, preset=encode_preset,
+            title=getattr(spec, "title", ""), burn_timestamps_=False,
+            **render_video_kwargs)
+        if cache is not None and video_cache_key is not None:
+            caching.store_video(cache, video_cache_key, video_path, {
+                "sidecar_path": getattr(result, "sidecar_path", ""),
+                "fps": getattr(result, "fps", None),
+                "n_frames": getattr(result, "n_frames", len(frames)),
+            })
 
     report(1.0, "Done")
 
@@ -2079,6 +2152,7 @@ def run_pipeline(
             "audio_path": (os.path.abspath(audio_path)
                            if audio_path is not None else None),
         },
+        "cache": cache_report,
     }
 
     return RunResult(

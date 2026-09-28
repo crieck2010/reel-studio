@@ -35,10 +35,10 @@ try:
 except ImportError:  # headless / tests: import still works, main() won't run
     st = None  # type: ignore
 
-from studio import batch, llm_assist, peers, pipeline, scheduler, styling
+from studio import batch, caching, llm_assist, peers, pipeline, scheduler, styling
 
 APP_TITLE = "reel-studio"
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.8.0"
 PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate",
               "survey-layout", "survey-style", "survey-schedule")
 
@@ -806,7 +806,8 @@ def _run_batch(statuses: Dict[str, peers.PeerStatus],
         return spec
 
     batch.run_batch(batch_jobs, wired, out_root, parse_fn,
-                    progress=on_progress)
+                    progress=on_progress,
+                    cache=_open_run_cache(statuses))
 
     # Merge statuses back into the session queue (matched by order).
     jobs = list(st.session_state.get("batch_jobs") or [])
@@ -985,6 +986,55 @@ def _schedule_step(statuses: Dict[str, peers.PeerStatus]) -> None:
             st.caption(f"error: {record.error}")
 
 
+def _cache_section(statuses: Dict[str, peers.PeerStatus]) -> None:
+    """Render-cache controls — inside the Run step, before the button.
+
+    The survey-cache peer (optional seventh engine) stores rendered
+    frame batches and encoded MP4s keyed by fingerprints of their
+    inputs, so re-running an unchanged reel skips the render and the
+    encode. Everything is transparent: same pixels, less waiting.
+    """
+    cache_status = statuses.get("survey-cache")
+    with st.expander("Render cache (optional)", expanded=False):
+        if cache_status is None or not cache_status.installed:
+            st.info("Install the render cache to skip re-rendering "
+                    "unchanged reels:\n\n"
+                    f"`{cache_status.pip_command if cache_status else 'pip install git+https://github.com/crieck2010/survey-cache.git'}`\n\n"
+                    "Without it, every run renders and encodes from "
+                    "scratch — nothing else changes.")
+            return
+        st.checkbox("Use render cache for this run", value=True,
+                    key="use_cache",
+                    help="When on, identical re-runs reuse cached frames "
+                         "and the cached MP4 instead of re-rendering.")
+        cache = caching.open_cache()
+        if cache is None:
+            st.caption("Caching is disabled "
+                       "(`REEL_STUDIO_CACHE=0` is set).")
+            return
+        info = caching.describe_stats(cache)
+        st.caption(f"Cache: **{info['entries']}** objects, "
+                   f"**{info['tags']}** tags, **{info['used_human']}** "
+                   f"({info['used_pct']}% of budget) · "
+                   f"{info['hits']} hits / {info['misses']} misses")
+        st.caption(f"Location: `{caching.default_cache_dir()}` "
+                   f"(override with `{caching.CACHE_DIR_ENV}`).")
+        if st.button("Clear render cache", key="cache_clear"):
+            cache.clear()
+            st.success("Render cache cleared.")
+            st.rerun()
+
+
+def _open_run_cache(statuses: Dict[str, peers.PeerStatus]) -> Any:
+    """The cache for a run, or None when disabled/unavailable."""
+    cache_status = statuses.get("survey-cache")
+    if cache_status is None or not cache_status.installed:
+        return None
+    if not st.session_state.get("use_cache", True):
+        return None
+    return caching.open_cache()
+
+
 def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     st.subheader("7 · Run the pipeline")
     spec_dict: Optional[Dict[str, Any]] = st.session_state.get("spec_dict")
@@ -993,6 +1043,7 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
         return
 
     _refine_section(statuses)
+    _cache_section(statuses)
 
     if not st.button("Run — fetch, render, encode", type="primary"):
         # Show a previous result if the session already ran.
@@ -1017,6 +1068,7 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     try:
         result = pipeline.run_pipeline(
             spec, wired, out_dir, progress=on_progress,
+            cache=_open_run_cache(statuses),
             cmap=st.session_state.get("cmap"),
             motion=(st.session_state.get("motion") or None),
             audio_path=st.session_state.get("audio_path"),
@@ -1144,6 +1196,14 @@ def _show_result() -> None:
         )
     st.caption(
         f"{result['n_frames']} frames · sidecar: `{result['sidecar_path']}`")
+    cache_info = ((result.get("provenance") or {}).get("cache") or {})
+    if cache_info.get("enabled"):
+        bits = []
+        bits.append("frames from cache" if cache_info.get("frame_hit")
+                    else "frames freshly rendered")
+        bits.append("video from cache" if cache_info.get("video_hit")
+                    else "video freshly encoded")
+        st.caption("Render cache: " + " · ".join(bits))
     platform = result.get("platform") or "legacy"
     canvas = ((result.get("provenance") or {}).get("render") or {}
               ).get("canvas")

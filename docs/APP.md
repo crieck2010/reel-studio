@@ -172,6 +172,15 @@ the app says so and does nothing.
 Press **Run — fetch, render, encode**. With a progress bar and live
 status messages, the pipeline:
 
+**Render cache** (optional) — with the survey-cache peer installed,
+the Run step shows a cache expander: a per-run toggle, live usage
+(objects, tags, disk use, hit/miss counters), the cache location
+(`~/.reel-studio/cache`, override with `REEL_STUDIO_CACHE_DIR`), and a
+clear button. Re-running an unchanged reel reuses cached frames and the
+cached MP4 instead of re-rendering; new satellite data always
+re-renders honestly (see `docs/CACHING.md`). `REEL_STUDIO_CACHE=0`
+disables it entirely.
+
 1. **Fetches** — the spec's variable for the spec's bbox (30-day stride
    for daily sources) plus a context series where the adapter provides
    one, both with provenance (source URL, SHA-256, retrieval time).

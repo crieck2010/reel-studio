@@ -1,17 +1,18 @@
 """Optional peer imports with graceful degradation.
 
-The six peers are separate packages, installed from their own GitHub
+The seven peers are separate packages, installed from their own GitHub
 repos. Nothing in reel-studio hard-imports them: :func:`load_peers`
 tries each one and records what is missing, :func:`require_peer` raises
 a :class:`MissingPeerError` whose message names the exact
 ``pip install git+https://...`` command that fixes it, and
 :func:`wire_peers` builds the callables namespace that
 :mod:`studio.pipeline` runs against. survey-layout is the optional
-fourth peer, survey-style the optional fifth, and survey-schedule the
-optional sixth: none is ever *required* (the legacy 1080×1920 layout
-always works, the manual aesthetics controls always work, and one-off
-plus batch generation always work), and the UI offers their features
-only when they are installed.
+fourth peer, survey-style the optional fifth, survey-schedule the
+optional sixth, and survey-cache the optional seventh: none is ever
+*required* (the legacy 1080×1920 layout always works, the manual
+aesthetics controls always work, one-off plus batch generation always
+work, and rendering without a cache always works), and the UI offers
+their features only when they are installed.
 """
 
 from __future__ import annotations
@@ -58,6 +59,13 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
         "needed_for": "scheduled generation for the Schedule step "
                       "(schedx.Job / JobStore / Runner: cron, interval "
                       "and once schedules with a run ledger)",
+    },
+    "survey-cache": {
+        "module": "cachex",
+        "pip": "pip install git+https://github.com/crieck2010/survey-cache.git",
+        "needed_for": "smarter render caching (cachex.Cache: "
+                      "content-addressed frame-batch and MP4 reuse, "
+                      "keyed by fingerprints of the render inputs)",
     },
 }
 

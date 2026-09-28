@@ -59,6 +59,7 @@ def run_batch(
     out_root: str,
     parse_fn: Callable[[str], Any],
     progress: Optional[Callable[[int, int, float, str], None]] = None,
+    cache: Any = None,
 ) -> List[BatchJob]:
     """Run ``jobs`` sequentially against ``peers``.
 
@@ -72,6 +73,9 @@ def run_batch(
         parse_fn: ``description -> VizSpec`` (raises on unparseable).
         progress: optional ``(job_index, n_jobs, frac, message)``
             callback.
+        cache: optional render cache passed through to
+            :func:`studio.pipeline.run_pipeline` (see
+            :mod:`studio.caching`); ``None`` disables caching.
 
     A job that raises — at parse or at any pipeline stage — is marked
     ``failed`` with its error recorded and the queue continues with
@@ -106,7 +110,7 @@ def run_batch(
                       if k in job.settings}
             job.result = pipeline.run_pipeline(
                 spec, peers, job.out_dir,
-                progress=_job_progress, **kwargs)
+                progress=_job_progress, cache=cache, **kwargs)
         except pipeline.UnfetchableRegionError as exc:
             job.status = "failed"
             job.error = f"Not fetchable: {exc}"

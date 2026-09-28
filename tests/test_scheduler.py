@@ -132,8 +132,11 @@ def test_execute_reel_job_maps_settings(monkeypatch, tmp_path):
     detail = scheduler.execute_reel_job(
         _job(), str(tmp_path), statuses)
     assert detail == {"video_path": "/tmp/runs/out.mp4", "n_frames": 42}
-    assert capture["kwargs"] == {"platform": "tiktok",
-                                 "style_preset": "midnight-ocean"}
+    kwargs = dict(capture["kwargs"])
+    cache = kwargs.pop("cache", None)
+    assert kwargs == {"platform": "tiktok",
+                     "style_preset": "midnight-ocean"}
+    assert cache is None or hasattr(cache, "put_bytes")
     assert capture["out_dir"] == str(tmp_path)
     assert "Lake Michigan" in capture["spec"]
 

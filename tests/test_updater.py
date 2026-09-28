@@ -2,7 +2,7 @@
 
 ``Update reel-studio.bat`` cannot execute on Linux, so this test pins
 the script's essential behavior by content: it must pull the repo,
-upgrade all six peers (from a local checkout when present, from
+upgrade all seven peers (from a local checkout when present, from
 GitHub otherwise), report installed versions, and wait before closing.
 """
 
@@ -14,7 +14,8 @@ import re
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BAT = os.path.join(REPO_ROOT, "Update reel-studio.bat")
 PEERS = ("survey-viz", "survey-currents", "survey-animate",
-         "survey-layout", "survey-style", "survey-schedule")
+         "survey-layout", "survey-style", "survey-schedule",
+         "survey-cache")
 
 
 def _text():

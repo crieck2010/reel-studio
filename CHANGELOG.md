@@ -2,6 +2,37 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.8.0] - 2026-09-28
+
+### Added
+- **Smarter render caching** (new survey-cache peer, optional seventh
+  engine): the pipeline now fingerprints its render inputs (spec dict,
+  SHA-256 digests of the fetched arrays, render kwargs, platform
+  canvas, style preset, survey-viz version) and reuses cached frame
+  batches instead of re-rendering — then fingerprints the encode inputs
+  (frame content keys, preset, title, motion, audio content hash,
+  survey-animate version) and reuses cached MP4s instead of re-running
+  ffmpeg. New satellite data means new array bytes, which means an
+  honest cache miss and a fresh render; the fetch itself always
+  re-runs. Stored artifacts are content-addressed, so an identical PNG
+  in two reels is stored once.
+- `studio/caching.py`: the consumer-side bridge — key builders
+  (`frame_batch_key`, `video_key`), numpy-aware input digesting,
+  store/restore helpers for frame batches and videos, cache location
+  (`~/.reel-studio/cache`, `REEL_STUDIO_CACHE_DIR` override),
+  `REEL_STUDIO_CACHE=0` kill switch. `run_pipeline(..., cache=None)`
+  accepts the cache; batch runs and scheduled jobs use it
+  automatically. The Run step shows a Render-cache expander (toggle,
+  live usage stats, clear button, install hint); the result step and
+  provenance report which stages hit.
+- `docs/CACHING.md`: key design, invalidation discipline, storage
+  layout, honest limits (local disk only, single-writer assumption,
+  version-keyed invalidation).
+- `Update reel-studio.bat` now upgrades all seven peers and prints all
+  seven installed versions.
+- Without the survey-cache peer every run renders and encodes from
+  scratch — same optional-peer pattern as the other engines.
+
 ## [0.7.0] - 2026-09-28
 
 ### Added

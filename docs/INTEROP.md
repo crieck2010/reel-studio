@@ -1,9 +1,10 @@
 # reel-studio interop: peer contracts
 
-reel-studio integrates five peer engines. All contracts below were
+reel-studio integrates seven peer engines. All contracts below were
 verified against the peers' **actual code** (survey-currents v0.15.0,
 survey-viz v0.18.0, survey-animate v0.2.0, survey-layout v0.1.0,
-survey-style v0.1.0), not guesses. reel-studio never
+survey-style v0.1.0, survey-schedule v0.1.0, survey-cache v0.1.0), not
+guesses. reel-studio never
 hard-imports peers and never imports peer internals beyond the entry
 points listed here.
 
@@ -488,3 +489,26 @@ four lakes' bboxes already fit the grid.
 * Without the survey-schedule peer the Schedule step shows the exact
   install command; `require_schedx` raises `MissingPeerError` naming
   the fix. Same optional-peer pattern as survey-layout/survey-style.
+
+## Render-cache contract (survey-cache v0.1.0)
+
+* `studio/caching.py` is the consumer-side seam: it builds cache keys
+  (`frame_batch_key` fingerprints the spec dict, SHA-256 digests of the
+  fetched arrays, the `render_viz` kwargs, the platform canvas, the
+  style preset, the platform, and the survey-viz version;
+  `video_key` fingerprints the frame content keys, the encode preset,
+  title, motion, the audio file's content hash, and the
+  survey-animate version) and stores/restores frame batches and MP4s
+  through the engine. The engine (`cachex`) is storage-only —
+  content-addressed bytes, tags, LRU eviction — and never imports
+  reel-studio.
+* `run_pipeline(..., cache=None)`: with a cache, a frame-batch hit
+  skips `render_viz` and a video hit skips `render_video`; misses store
+  their outputs and tag them. The fetch always re-runs — the cache
+  answers "given this data, are the frames already drawn?", never "is
+  the data fresh?". Provenance records the cache report (`enabled`,
+  `frame_hit`, `video_hit`, tag names).
+* Batch (`run_batch(..., cache=...)`) and scheduled jobs
+  (`execute_reel_job` opens the cache unless `REEL_STUDIO_CACHE=0`)
+  share the same cache. Default home `~/.reel-studio/cache`
+  (`REEL_STUDIO_CACHE_DIR` overrides).

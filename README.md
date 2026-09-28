@@ -22,6 +22,7 @@ inspectable reason it was chosen. No LLM is required at runtime.
 | [survey-layout](https://github.com/crieck2010/survey-layout) | Platform aspect ratios + safe-zone canvases (optional) | v0.1.0 |
 | [survey-style](https://github.com/crieck2010/survey-style) | Reusable style presets for the Aesthetics step (optional) | v0.1.0 |
 | [survey-schedule](https://github.com/crieck2010/survey-schedule) | Scheduled generation: cron/interval/once jobs + run ledger (optional) | v0.1.0 |
+| [survey-cache](https://github.com/crieck2010/survey-cache) | Smarter render caching: content-addressed frame/MP4 reuse (optional) | v0.1.0 |
 | **reel-studio** (this repo) | Streamlit web app + UI-free pipeline orchestration | — |
 
 ## Supported data sources
@@ -72,13 +73,16 @@ pip install git+https://github.com/crieck2010/survey-animate.git
 pip install git+https://github.com/crieck2010/survey-layout.git   # optional: platform layouts
 pip install git+https://github.com/crieck2010/survey-style.git    # optional: style presets
 pip install git+https://github.com/crieck2010/survey-schedule.git # optional: scheduled generation
+pip install git+https://github.com/crieck2010/survey-cache.git    # optional: render caching
 ```
 
 The app **launches with any peer missing** — the Engine-status panel shows exactly which
 `pip install` command fixes it. Parsing needs survey-viz, fetching needs
 survey-currents, encoding needs survey-animate; survey-layout unlocks the platform
 aspect ratios, survey-style unlocks one-click style presets, survey-schedule unlocks
-the Schedule step (without it, only the legacy 1080×1920 layout is offered).
+the Schedule step (without it, only the legacy 1080×1920 layout is offered);
+survey-cache unlocks the render cache (without it, every run renders and
+encodes from scratch).
 
 ## Run
 
@@ -121,8 +125,8 @@ Your browser opens to `http://localhost:8501` (paste it manually if it doesn't).
 ## Updating
 
 No command line needed: double-click **`Update reel-studio.bat`** in the repo folder.
-It git-pulls reel-studio, upgrades the six peer engines (survey-viz, survey-currents,
-survey-animate, survey-layout, survey-style, survey-schedule) — from a local checkout when one sits next to the repo, otherwise
+It git-pulls reel-studio, upgrades the seven peer engines (survey-viz, survey-currents,
+survey-animate, survey-layout, survey-style, survey-schedule, survey-cache) — from a local checkout when one sits next to the repo, otherwise
 straight from GitHub — and prints the installed versions for confirmation. Run it any
 time a new release is announced, then launch with the **Reel Studio** desktop icon.
 
@@ -175,7 +179,7 @@ The app works **fully** without the key — it is never required. See
 
 ## What you'll see
 
-* **Engine status** — six badges (survey-viz / survey-currents / survey-animate / survey-layout / survey-style / survey-schedule),
+* **Engine status** — seven badges (survey-viz / survey-currents / survey-animate / survey-layout / survey-style / survey-schedule / survey-cache),
   green when installed, amber with the exact install command when missing.
 * **Step 1** — text area with an example description, **Parse** button, then the parsed
   `VizSpec` rendered as JSON (title, `region_key`, `bbox`, `variable`, pinned `source`
@@ -211,6 +215,11 @@ The app works **fully** without the key — it is never required. See
   (`python -m studio.scheduler run-due`, every minute via Task Scheduler or cron)
   runs due jobs and every attempt lands in the ledger. Needs survey-schedule;
   the PC must be on at run time — a missed run is skipped, never backfilled.
+* **Render cache** — with the survey-cache peer installed, the Run step shows a
+  cache panel: identical re-runs reuse cached frames and the cached MP4 instead
+  of re-rendering (cache keys fingerprint the spec, the fetched-data bytes, the
+  render/encode settings, and the peer versions, so new satellite data always
+  re-renders honestly). Toggle per run, inspect usage, clear on demand.
 * **Step 7** — **Refine in plain language** ("zoom in on the Gulf of Mexico
   and use a warmer colormap", "add a slow zoom in during the video"),
   then the **Run** button, progress bar with live status messages

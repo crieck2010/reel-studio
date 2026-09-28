@@ -19,7 +19,7 @@ import argparse
 import os
 from typing import Any, Callable, Dict, List, Optional
 
-from . import batch, llm_assist, peers, pipeline
+from . import batch, caching, llm_assist, peers, pipeline
 
 #: Env overrides for the jobs directory and the scheduled-run output root.
 JOBS_DIR_ENV = "REEL_STUDIO_JOBS_DIR"
@@ -142,8 +142,13 @@ def execute_reel_job(schedx_job: Any,
     if not schedx_job.description or not schedx_job.description.strip():
         raise ValueError("scheduled job has an empty description")
     spec = parse_fn(schedx_job.description)
+    # Scheduled runs reuse the render cache like interactive runs do —
+    # a daily/weekly job over unchanged inputs skips render+encode.
+    # REEL_STUDIO_CACHE=0 disables it headlessly, same as in the UI.
+    cache = caching.open_cache()
     result = pipeline.run_pipeline(
-        spec, wired, run_dir, **job_to_pipeline_kwargs(schedx_job))
+        spec, wired, run_dir, cache=cache,
+        **job_to_pipeline_kwargs(schedx_job))
     _ = viz  # the parse path already used it; kept for symmetry
     return {"video_path": result.video_path,
             "n_frames": result.n_frames}

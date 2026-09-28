@@ -14,13 +14,16 @@ reel-studio/
 │   ├── scheduler.py       # scheduled-generation bridge (survey-schedule
 │   │                      # peer, optional) + `python -m studio.scheduler`
 │   │                      # ticker entrypoint
+│   ├── caching.py         # render-cache bridge (survey-cache peer,
+│   │                      # optional): input fingerprinting + store/restore
 │   ├── llm_assist.py      # optional OpenAI-compatible assist (stdlib urllib)
 │   └── demo.py            # offline 3-description demo
-├── tests/                 # 312 pytest tests, fully offline
+├── tests/                 # 331 pytest tests, fully offline
 ├── requirements.txt       # streamlit, numpy, matplotlib, netCDF4 (+ pytest)
 └── docs/
     ├── APP.md             # user guide
     ├── ARCHITECTURE.md    # this file
+    ├── CACHING.md         # render-cache design + honest limits
     └── INTEROP.md         # peer contracts + discovered quirks
 ```
 
