@@ -1,8 +1,9 @@
 # reel-studio interop: peer contracts
 
-reel-studio integrates four peer engines. All contracts below were
+reel-studio integrates five peer engines. All contracts below were
 verified against the peers' **actual code** (survey-currents v0.15.0,
-survey-viz v0.18.0, survey-animate v0.2.0, survey-layout v0.1.0), not guesses. reel-studio never
+survey-viz v0.18.0, survey-animate v0.2.0, survey-layout v0.1.0,
+survey-style v0.1.0), not guesses. reel-studio never
 hard-imports peers and never imports peer internals beyond the entry
 points listed here.
 
@@ -394,6 +395,27 @@ four lakes' bboxes already fit the grid.
   (`frame_start`/`frame_end`/`text` per event); the app lists them
   under the finished reel. Categorical products keep their fixed
   scientific encodings and record requested-not-applied.
+
+## Style-presets contract (survey-style v0.1.0)
+
+* `studio/styling.py` is the UI-free seam: `preset_names`,
+  `preset_label`, `suggested_preset(variable)`, `preset_needs_channel`,
+  and `apply_preset(spec_dict, name, channel=...) -> (spec_dict, cmap)`.
+  Every helper takes the peer module as an argument — nothing in
+  reel-studio hard-imports `style`, and the peer is never *required*.
+* Applying a preset writes the `VizSpec` fields `style` / `title` /
+  `caption` / `underlay` and returns the colormap for `render_viz`'s
+  existing `cmap=` kwarg. The Aesthetics step fills its manual controls
+  with those values; the rest of the pipeline is untouched.
+* The preset name is recorded, not the styling logic:
+  `run_pipeline(..., style_preset="midnight-ocean")` stores it at
+  `provenance["render"]["style_preset"]`; batch snapshots carry it via
+  `JOB_SETTING_KEYS`. Manual edits after a preset (the **Apply
+  aesthetics** button, **Copy the look**, a fresh parse) reset it to
+  None — the provenance says `style_preset: null`, i.e. hand-tuned.
+* Without the survey-style peer the preset picker is replaced by the
+  exact install command and the manual controls keep working — the
+  same optional-peer pattern as survey-layout.
 
 ## Platform-canvases contract (survey-layout v0.1.0 / survey-viz v0.18.0)
 

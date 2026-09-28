@@ -35,12 +35,12 @@ try:
 except ImportError:  # headless / tests: import still works, main() won't run
     st = None  # type: ignore
 
-from studio import batch, llm_assist, peers, pipeline
+from studio import batch, llm_assist, peers, pipeline, styling
 
 APP_TITLE = "reel-studio"
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.6.0"
 PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate",
-              "survey-layout")
+              "survey-layout", "survey-style")
 
 #: Minimum peer versions for the v0.4.0 features.
 MIN_VIZ_STORY = (0, 17, 0)      # story captions + motion refine intents
@@ -108,6 +108,7 @@ def _current_run_settings() -> Dict[str, Any]:
         "story_captions": bool(st.session_state.get("story_captions")),
         "cmap": st.session_state.get("cmap"),
         "platform": st.session_state.get("platform") or "legacy",
+        "style_preset": st.session_state.get("style_preset"),
     }
 
 
@@ -174,6 +175,7 @@ def _parse_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     spec_dict = spec.to_dict()
     st.session_state["spec_dict"] = spec_dict
     st.session_state["description"] = text
+    st.session_state["style_preset"] = None  # fresh parse, no preset yet
     if used_assist:
         st.info("The deterministic parser could not handle this description, "
                 "so one LLM assist attempt was used (LLM_API_KEY was set). "
@@ -294,6 +296,74 @@ def _platform_step(statuses: Dict[str, peers.PeerStatus]) -> None:
         "the engine versions them as data.")
 
 
+def _style_preset_section(statuses: Dict[str, peers.PeerStatus],
+                          spec_dict: Dict[str, Any], rev: int) -> None:
+    """Style presets (survey-style peer) at the top of the Aesthetics step.
+
+    Applying a preset rewrites the spec's style/title/caption/underlay
+    and the colormap in one click; the manual controls below then show
+    the preset's values for further tweaking. A preset is a starting
+    point, not a lock: pressing "Apply aesthetics" afterwards with
+    manual edits records the run as hand-tuned (style_preset=None).
+    """
+    status = statuses.get("survey-style")
+    style_peer = status.module if status is not None and status.installed else None
+    if style_peer is None:
+        pip_cmd = (status.pip_command if status is not None
+                   else "pip install git+https://github.com/crieck2010/survey-style.git")
+        st.info(
+            "Style presets need the survey-style engine — install it "
+            f"(`{pip_cmd}`) to unlock one-click looks "
+            "(Midnight Ocean, Storm Chaser, Field Notes, Creator brand "
+            "kit, ...). The manual controls below work without it.")
+        return
+
+    names = styling.preset_names(style_peer)
+    if not names:  # pragma: no cover - the peer always ships built-ins
+        return
+    default = (st.session_state.get("style_preset")
+               or styling.suggested_preset(style_peer,
+                                           spec_dict.get("variable")))
+    choice = st.selectbox(
+        "Style preset",
+        options=names,
+        format_func=lambda n: styling.preset_label(style_peer, n),
+        index=names.index(default) if default in names else 0,
+        key="aes_preset_select",
+        help="One-click looks: base style, per-variable colormap, title "
+             "and footer templates, underlay — applied to the spec below. "
+             "You can still tweak every control afterwards.",
+    )
+    channel = None
+    if styling.preset_needs_channel(style_peer, choice):
+        channel = st.text_input(
+            "Channel name",
+            value=st.session_state.get("channel_name") or "",
+            key="aes_preset_channel",
+            help="Used by the preset's footer, e.g. © Your Channel.",
+        )
+        st.session_state["channel_name"] = channel
+    if st.button("Apply preset", type="secondary",
+                 key="aes_preset_apply",
+                 help="Fills the style, colormap, title, caption, and "
+                      "underlay controls below with this preset's values."):
+        try:
+            new_spec, cmap = styling.apply_preset(
+                style_peer, spec_dict, choice, channel=channel)
+        except ValueError as exc:
+            st.error(f"That preset did not apply: {exc}")
+            return
+        st.session_state["spec_dict"] = new_spec
+        st.session_state["cmap"] = cmap
+        st.session_state["style_preset"] = choice
+        st.rerun()
+    current = st.session_state.get("style_preset")
+    if current:
+        st.caption(f"Preset in effect: **{current}** — tweak the controls "
+                   "below freely, or pick another preset. Manual edits "
+                   "are recorded as hand-tuned.")
+
+
 def _aesthetics_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     """Step 3: style / title / caption / underlay / colormap controls.
 
@@ -311,6 +381,8 @@ def _aesthetics_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     status = statuses["survey-viz"]
     viz = status.module if status.installed else None
     rev = abs(hash(json.dumps(spec_dict, sort_keys=True, default=str)))
+
+    _style_preset_section(statuses, spec_dict, rev)
 
     style = st.selectbox(
         "Style",
@@ -427,6 +499,7 @@ def _aesthetics_step(statuses: Dict[str, peers.PeerStatus]) -> None:
         st.error(f"Those aesthetics did not validate: {exc}")
         return
     st.session_state["spec_dict"] = new_dict
+    st.session_state["style_preset"] = None  # hand-tuned from here on
     st.success("Aesthetics applied — the spec below is what will run.")
     st.json(new_dict)
 
@@ -510,6 +583,7 @@ def _copy_look_section(viz, spec_dict: Dict[str, Any], categorical: bool,
     new_dict = dict(st.session_state.get("spec_dict") or spec_dict)
     new_dict["style"] = profile_dict["style"]
     st.session_state["spec_dict"] = new_dict
+    st.session_state["style_preset"] = None  # copied look, not a preset
     if profile_dict["colormap"] and not categorical:
         st.session_state["cmap"] = profile_dict["colormap"]
     elif profile_dict["colormap"] and categorical:
@@ -650,7 +724,8 @@ def _batch_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     st.subheader("5 · Batch queue")
     st.caption("Queue several descriptions and generate them one after "
                "another, unattended. Each job snapshots your current "
-               "settings (motion, audio, captions, colormap, platform) and gets its "
+               "settings (motion, audio, captions, colormap, platform, style "
+               "preset) and gets its "
                "own output folder — a failed job never loses completed "
                "ones.")
 
@@ -816,7 +891,8 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
             motion=(st.session_state.get("motion") or None),
             audio_path=st.session_state.get("audio_path"),
             story_captions=bool(st.session_state.get("story_captions")),
-            platform=st.session_state.get("platform") or "legacy")
+            platform=st.session_state.get("platform") or "legacy",
+            style_preset=st.session_state.get("style_preset"))
     except (pipeline.UnfetchableRegionError,
             pipeline.UnsupportedVariableError) as exc:
         progress_bar.empty()
@@ -849,6 +925,7 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
         "n_frames": result.n_frames,
         "manifest_path": result.manifest_path,
         "platform": result.platform,
+        "style_preset": st.session_state.get("style_preset"),
     }
     _show_result()
 
@@ -945,6 +1022,9 @@ def _show_result() -> None:
                    f"{canvas['width']}×{canvas['height']}")
     else:
         st.caption(f"Platform: **{platform}** (legacy 1080×1920 layout)")
+    style_preset = result.get("style_preset")
+    st.caption(f"Style: **{style_preset}** (preset)"
+               if style_preset else "Style: hand-tuned")
     captions = _caption_events(result.get("manifest_path"))
     if captions:
         with st.expander(f"Story captions ({len(captions)})"):

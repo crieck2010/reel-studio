@@ -48,6 +48,15 @@ layout and claims no safe-zone support.
 
 Style the reel before it runs:
 
+* **Style preset** (needs the survey-style peer) — one-click looks
+  that set the style, colormap, title, footer caption, and underlay
+  together: Reel Dark (default), Reel Light, Midnight Ocean (cinematic
+  dark grade for ocean variables), Field Notes (light, print-like),
+  Storm Chaser (high-contrast atmosphere/hazards), Creator Brand Kit
+  (adds a `© Your Channel` footer — the app asks for the channel
+  name). The picker suggests the preset that fits the parsed variable.
+  Without the survey-style peer the app says so with the install
+  command and the manual controls below keep working.
 * **Style** — Dark (`reel-dark`, the default) or Light.
 * **Title** — burned into the top of every frame; seeded from the
   parsed title.
@@ -68,8 +77,13 @@ Style the reel before it runs:
   Needs survey-viz ≥ 0.17.0; categorical products keep their fixed
   scientific encodings and skip captions honestly.
 
-Press **Apply aesthetics** to validate the tweaks and store the spec
+Press **Apply preset** to fill the controls with a preset's values
+(the result step then records the preset name in the provenance);
+press **Apply aesthetics** to validate the tweaks and store the spec
 that will run (the colormap applies immediately, without the button).
+Manual edits after a preset are recorded as hand-tuned
+(`style_preset: null` in the provenance) — the preset is a starting
+point, not a lock.
 
 **Copy the look of a reel** — paste a reel link (Instagram, TikTok,
 YouTube, …) or upload a screenshot, press **Analyze look**, and the

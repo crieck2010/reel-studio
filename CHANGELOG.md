@@ -2,6 +2,29 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.6.0] - 2026-09-28
+
+### Added
+- **Reusable style presets** (new survey-style peer, optional fifth
+  engine): the Aesthetics step opens with a style-preset picker —
+  Reel Dark, Reel Light, Midnight Ocean, Field Notes, Storm Chaser,
+  Creator Brand Kit — suggesting the preset that fits the parsed
+  variable. **Apply preset** fills the style, colormap, title, footer
+  caption, and underlay controls in one click (the Creator kit asks
+  for the channel name used in its `©` footer); every control stays
+  tweakable afterwards. The preset name flows through
+  `run_pipeline(style_preset=...)`, batch job settings snapshots,
+  and provenance (`render.style_preset`); manual edits afterwards are
+  recorded as hand-tuned (`style_preset: null`), and the result step
+  shows the preset or "hand-tuned". Without the survey-style peer the
+  picker is replaced by the install command and the manual controls
+  keep working — same optional-peer pattern as survey-layout.
+- `studio/styling.py`: UI-free preset helpers (names, labels,
+  suggestion, `{channel}` detection, apply) taking the peer module as
+  an argument so tests never hard-import it.
+- `Update reel-studio.bat` now upgrades all five peers and prints all
+  five installed versions.
+
 ## [0.5.0] - 2026-09-28
 
 ### Added

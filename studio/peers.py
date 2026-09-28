@@ -1,15 +1,16 @@
 """Optional peer imports with graceful degradation.
 
-The four peers are separate packages, installed from their own GitHub
+The five peers are separate packages, installed from their own GitHub
 repos. Nothing in reel-studio hard-imports them: :func:`load_peers`
 tries each one and records what is missing, :func:`require_peer` raises
 a :class:`MissingPeerError` whose message names the exact
 ``pip install git+https://...`` command that fixes it, and
 :func:`wire_peers` builds the callables namespace that
 :mod:`studio.pipeline` runs against. survey-layout is the optional
-fourth peer: it is never *required* (the legacy 1080×1920 layout always
-works), and the pipeline raises :class:`PeerTooOldError` with its
-install command only when a non-legacy platform is requested.
+fourth peer and survey-style the optional fifth: neither is ever
+*required* (the legacy 1080×1920 layout always works, and the manual
+aesthetics controls always work), and the UI offers their features
+only when they are installed.
 """
 
 from __future__ import annotations
@@ -42,6 +43,13 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
         "needed_for": "platform aspect ratios + safe-zone canvases for frame "
                       "rendering (layout.to_viz_canvas, consumed by "
                       "survey-viz >= 0.18.0's render_viz canvas=)",
+    },
+    "survey-style": {
+        "module": "style",
+        "pip": "pip install git+https://github.com/crieck2010/survey-style.git",
+        "needed_for": "reusable style presets for the Aesthetics step "
+                      "(style.apply_style: base style + per-variable "
+                      "colormaps + title/footer templates + underlay)",
     },
 }
 

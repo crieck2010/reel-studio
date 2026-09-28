@@ -25,7 +25,7 @@ JOB_STATUSES = ("queued", "running", "done", "failed", "skipped")
 #: ``settings`` dict is ignored, so the UI can stash display hints).
 JOB_SETTING_KEYS = (
     "motion", "audio_path", "story_captions", "cmap",
-    "stride_days", "stride_hours", "platform",
+    "stride_days", "stride_hours", "platform", "style_preset",
 )
 
 

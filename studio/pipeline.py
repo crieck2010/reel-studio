@@ -1308,6 +1308,7 @@ def run_pipeline(
     audio_path: Optional[str] = None,
     story_captions: bool = False,
     platform: Optional[str] = None,
+    style_preset: Optional[str] = None,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1368,6 +1369,10 @@ def run_pipeline(
             survey-viz >= 0.18.0 *and* the survey-layout peer;
             otherwise raises :class:`PeerTooOldError` with the exact
             install/upgrade command.
+        style_preset: name of the survey-style preset the spec's
+            aesthetics came from (e.g. ``"midnight-ocean"``), or None
+            for hand-tuned aesthetics. Recorded in the reel provenance
+            only — the styled values already live in ``spec``.
 
     Raises:
         UnfetchableRegionError / UnsupportedVariableError: honest,
@@ -2054,6 +2059,7 @@ def run_pipeline(
             "manifest_path": manifest_path,
             "n_frames": len(frames),
             "story_captions": story_captions,
+            "style_preset": style_preset,
             "platform": platform or "legacy",
             "platform_flavor": layout_flavor,
             "canvas": ({

@@ -20,6 +20,7 @@ inspectable reason it was chosen. No LLM is required at runtime.
 | [survey-viz](https://github.com/crieck2010/survey-viz) | Description parser + reel frame renderer | v0.18.0 |
 | [survey-animate](https://github.com/crieck2010/survey-animate) | Frames → MP4 encoder (resolves ffmpeg) | v0.2.0 |
 | [survey-layout](https://github.com/crieck2010/survey-layout) | Platform aspect ratios + safe-zone canvases (optional) | v0.1.0 |
+| [survey-style](https://github.com/crieck2010/survey-style) | Reusable style presets for the Aesthetics step (optional) | v0.1.0 |
 | **reel-studio** (this repo) | Streamlit web app + UI-free pipeline orchestration | — |
 
 ## Supported data sources
@@ -68,11 +69,13 @@ pip install git+https://github.com/crieck2010/survey-viz.git
 pip install git+https://github.com/crieck2010/survey-currents.git
 pip install git+https://github.com/crieck2010/survey-animate.git
 pip install git+https://github.com/crieck2010/survey-layout.git   # optional: platform layouts
+pip install git+https://github.com/crieck2010/survey-style.git    # optional: style presets
 ```
 
 The app **launches with any peer missing** — the Engine-status panel shows exactly which
 `pip install` command fixes it. Parsing needs survey-viz, fetching needs
 survey-currents, encoding needs survey-animate; survey-layout unlocks the platform
+aspect ratios, survey-style unlocks one-click style presets
 step (without it, only the legacy 1080×1920 layout is offered).
 
 ## Run
@@ -116,8 +119,8 @@ Your browser opens to `http://localhost:8501` (paste it manually if it doesn't).
 ## Updating
 
 No command line needed: double-click **`Update reel-studio.bat`** in the repo folder.
-It git-pulls reel-studio, upgrades the four peer engines (survey-viz, survey-currents,
-survey-animate, survey-layout) — from a local checkout when one sits next to the repo, otherwise
+It git-pulls reel-studio, upgrades the five peer engines (survey-viz, survey-currents,
+survey-animate, survey-layout, survey-style) — from a local checkout when one sits next to the repo, otherwise
 straight from GitHub — and prints the installed versions for confirmation. Run it any
 time a new release is announced, then launch with the **Reel Studio** desktop icon.
 
@@ -170,7 +173,7 @@ The app works **fully** without the key — it is never required. See
 
 ## What you'll see
 
-* **Engine status** — four badges (survey-viz / survey-currents / survey-animate / survey-layout),
+* **Engine status** — five badges (survey-viz / survey-currents / survey-animate / survey-layout / survey-style),
   green when installed, amber with the exact install command when missing.
 * **Step 1** — text area with an example description, **Parse** button, then the parsed
   `VizSpec` rendered as JSON (title, `region_key`, `bbox`, `variable`, pinned `source`
