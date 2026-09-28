@@ -17,7 +17,7 @@ inspectable reason it was chosen. No LLM is required at runtime.
 | Repo | Role | Version tested |
 |---|---|---|
 | [survey-currents](https://github.com/crieck2010/survey-currents) | Data-fetch engines for all 13 sources | v0.15.0 |
-| [survey-viz](https://github.com/crieck2010/survey-viz) | Description parser + reel frame renderer | v0.15.0 |
+| [survey-viz](https://github.com/crieck2010/survey-viz) | Description parser + reel frame renderer | v0.16.0 |
 | [survey-animate](https://github.com/crieck2010/survey-animate) | Frames → MP4 encoder (resolves ffmpeg) | v0.1.0 |
 | **reel-studio** (this repo) | Streamlit web app + UI-free pipeline orchestration | — |
 
@@ -86,10 +86,13 @@ Your browser opens to `http://localhost:8501` (paste it manually if it doesn't).
    source, the reason that source was chosen, dates, title.
 2. **Aesthetics** — pick Dark/Light style, edit the title, add an optional footer
    caption, toggle the basemap underlay, and choose a colormap (continuous data maps
-   only). Press **Apply aesthetics** to store the spec that will run.
-3. **Run** — press **Run**. The pipeline fetches the data (progress bar + status
-   messages), renders the frames, and encodes the MP4. Anything the stack can't answer
-   gets an honest message naming what's missing — no crash.
+   only) — or paste a reel URL / upload a screenshot to copy its color mood.
+   Press **Apply aesthetics** to store the spec that will run.
+3. **Run** — optionally **Refine in plain language** first ("zoom in on the Gulf of
+   Mexico and use a warmer colormap"), then press **Run**. The pipeline fetches the
+   data (progress bar + status messages), renders the frames, and encodes the MP4.
+   Anything the stack can't answer gets an honest message naming what's missing —
+   no crash.
 4. **Take the reel** — embedded video player, **Download MP4** button, and a
    *Provenance* expander with the exact fetch URLs, SHA-256 hashes, and the full spec
    (every frame is reproducible from what's listed there).
@@ -161,8 +164,12 @@ The app works **fully** without the key — it is never required. See
   (Automatic + 30 curated names; continuous data maps only — categorical
   products like earthquakes keep their fixed scientific colors). **Apply
   aesthetics** validates the tweaks against the installed survey-viz and
-  shows the spec that will run.
-* **Step 3** — **Run** button, progress bar with live status messages ("Fetching
+  shows the spec that will run. **Copy the look of a reel** — paste a reel
+  URL or upload a screenshot to copy its color mood (dark/light style +
+  colormap suggestion).
+* **Step 3** — **Refine in plain language** ("zoom in on the Gulf of Mexico
+  and use a warmer colormap"), then the **Run** button, progress bar with
+  live status messages ("Fetching
   NOAA GLSEA sea-surface-temperature grid…", "Rendering reel frames…", "Encoding
   MP4…").
 * **Step 4** — embedded video player, **Download MP4** button, and a *Provenance*
@@ -184,7 +191,7 @@ pytest tests/
 
 The suite covers the UI-free pipeline (`studio/pipeline.py`), peer wiring with graceful
 degradation, source selection, provenance, and the offline demo. Fresh-clone verified
-against the released peers: 234 passed.
+against the released peers: 249 passed.
 
 ## Manual smoke check
 

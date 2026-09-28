@@ -15,6 +15,12 @@ points listed here.
 | `is_fetchable` | `(region_key) -> bool`; True for gazetteer regions the installed peers can serve (13 sources as of survey-viz 0.15.0) | fetch planning |
 | `get_region` | `(key) -> dict \| None` | (available; currently unused) |
 | `render_viz` | `(spec, field, series=None, out_dir="frames", layout="reel-vertical", style=None, underlay=None, cmap=None) -> (frames, manifest_path)` | Step 3 frame rendering; `cmap` needs survey-viz ≥ 0.15.0 (validated override, continuous maps only — categorical renderers keep fixed colors); `run_pipeline` only passes `cmap` when set, so older peers keep working |
+| `refine_spec` | `(spec, instruction, today=None) -> RefineResult` (needs ≥ 0.16.0); `RefineResult.spec/.cmap/.applied/.unparsed`; raises `UnparseableDescription` | Step 3 "Refine in plain language"; UI shows every `SpecChange` (field/old/new/reason) and every unparsed note; `cmap` feeds the same session-state colormap the step-2 picker uses |
+| `suggest_aesthetic` | `(url_or_bytes) -> AestheticProfile` (needs ≥ 0.16.0); raises `AestheticError` | Step 2 "Copy the look of a reel" |
+| `fetch_image_bytes` / `analyze_image` | `(url) -> bytes` / `(data, source="upload") -> AestheticProfile` (needs ≥ 0.16.0) | Step 2 look-copying: `fetch_image_bytes` fetches the thumbnail for the UI's own preview; `analyze_image` re-analyzes stored bytes so an uploaded screenshot survives across renders. `AestheticProfile.to_dict()` is JSON-serializable (style/colormap/palette/brightness/dominant_hue/source/notes) |
+
+Version gates are `hasattr` checks on the peer module (`refine_spec`,
+`suggest_aesthetic`) — no version parsing, no crashes with older peers.
 
 `field`/`series` are **duck-typed**: reel-studio passes the documented
 dict forms — `{"times", "lats", "lons", "values"}` and

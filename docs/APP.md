@@ -51,7 +51,34 @@ Style the reel before it runs:
 Press **Apply aesthetics** to validate the tweaks and store the spec
 that will run (the colormap applies immediately, without the button).
 
+**Copy the look of a reel** — paste a reel link (Instagram, TikTok,
+YouTube, …) or upload a screenshot, press **Analyze look**, and the
+app reads the reference's *color mood*: overall brightness (→ Dark or
+Light style) and dominant hues (→ the closest of the 30 curated
+colormaps). It shows the measured palette and the suggested style +
+colormap with explanatory notes before you **Apply this look**.
+Honest limits, stated in the UI: only the color mood is copied —
+fonts, layouts, and transitions can't be read from a thumbnail; the
+video itself is never downloaded (social platforms keep it behind
+login walls), so a URL falls back to the page's preview thumbnail and
+a screenshot upload is the most reliable input; categorical products
+(earthquakes, streamgages, storm tracks) keep their fixed scientific
+colors even when a reference suggests a colormap. Needs
+survey-viz ≥ 0.16.0 — with an older peer the app says so and does
+nothing.
+
 ### Step 3 — Run the pipeline
+
+**Refine in plain language** (optional) — before running, describe the
+changes you want: "zoom in on the Gulf of Mexico", "use a warmer
+colormap", "title it 'Gulf Heat'", "run it from 2015 to 2020",
+"switch to light mode", "hide the basemap". The app applies them to
+the parsed spec via `viz.refine_spec` and shows every applied change
+(old → new + reason) plus anything it couldn't understand — then you
+press **Run** to regenerate. Only the things you mention change;
+automatic titles follow region/variable/time changes, custom titles
+are never touched. Needs survey-viz ≥ 0.16.0 — with an older peer
+the app says so and does nothing.
 
 Press **Run — fetch, render, encode**. With a progress bar and live
 status messages, the pipeline:

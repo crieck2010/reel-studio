@@ -31,11 +31,11 @@ if errorlevel 1 echo WARNING: git pull failed for reel-studio - continuing anywa
 echo.
 
 for %%P in (survey-viz survey-currents survey-animate) do (
-    if exist "%%P\.git" (
+    if exist "..\%%P\.git" (
         echo === %%P  [local checkout] ===
-        git -C "%%P" pull --ff-only
+        git -C "..\%%P" pull --ff-only
         if errorlevel 1 echo WARNING: git pull failed for %%P - reinstalling from the checkout anyway.
-        python -m pip install --upgrade "%%P"
+        python -m pip install --upgrade "..\%%P"
     ) else (
         echo === %%P  [from GitHub] ===
         python -m pip install --upgrade "git+https://github.com/crieck2010/%%P.git"

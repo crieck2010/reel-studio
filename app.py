@@ -209,6 +209,8 @@ def _aesthetics_step(statuses: Dict[str, peers.PeerStatus]) -> None:
         cmap = None if choice == auto else choice
         st.session_state["cmap"] = cmap
 
+    _copy_look_section(viz, spec_dict, categorical, rev, status)
+
     if not st.button(
         "Apply aesthetics",
         type="secondary",
@@ -238,6 +240,97 @@ def _aesthetics_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     st.json(new_dict)
 
 
+def _copy_look_section(viz, spec_dict: Dict[str, Any], categorical: bool,
+                       rev: int, status) -> None:
+    """'Copy the look of a reel' — inside the Aesthetics step.
+
+    Analyzes a reel URL's thumbnail (or an uploaded screenshot) with
+    ``viz.suggest_aesthetic`` and offers to apply the measured style +
+    colormap. Needs survey-viz >= 0.16.0; older peers get the upgrade
+    hint instead of a crash.
+    """
+    st.divider()
+    st.markdown("**Copy the look of a reel**")
+    if viz is None or not hasattr(viz, "suggest_aesthetic"):
+        st.info("Copying a reel's look needs survey-viz ≥ 0.16.0 — "
+                f"upgrade it (`{status.pip_command}`) to unlock it.")
+        return
+    st.caption(
+        "Paste a reel link (Instagram, TikTok, YouTube, ...) or upload a "
+        "screenshot. The app reads the reference's *color mood* — overall "
+        "brightness and dominant hues — and suggests the closest dark/light "
+        "style and colormap. Fonts, layouts, and transitions can't be read "
+        "from a thumbnail and are not copied.")
+    url = st.text_input(
+        "Reel URL",
+        key=f"look_url_{rev}",
+        help="The page's preview thumbnail is analyzed; the video itself "
+             "is never downloaded.",
+    )
+    upload = st.file_uploader(
+        "…or upload a screenshot",
+        type=["png", "jpg", "jpeg", "webp"],
+        key=f"look_up_{rev}",
+    )
+    if st.button("Analyze look", key=f"look_go_{rev}"):
+        data: Optional[bytes] = None
+        origin = ""
+        try:
+            if upload is not None:
+                data = upload.read()
+                origin = "upload"
+            elif url and url.strip():
+                origin = url.strip()
+                data = viz.fetch_image_bytes(origin)
+            else:
+                st.warning("Paste a reel URL or upload a screenshot first.")
+                return
+            profile = viz.analyze_image(data, source=origin)
+        except viz.AestheticError as exc:
+            st.error(f"Could not read that reference: {exc}")
+            return
+        except Exception as exc:  # pragma: no cover - defensive
+            st.error(f"Could not read that reference: {exc}")
+            return
+        st.session_state["look_profile"] = profile.to_dict()
+        st.session_state["look_bytes"] = data
+
+    profile_dict = st.session_state.get("look_profile")
+    if not profile_dict:
+        return
+    look_bytes = st.session_state.get("look_bytes")
+    if look_bytes:
+        st.image(look_bytes, caption="Reference thumbnail")
+    swatches = "".join(
+        f'<span title="{color}" style="display:inline-block;width:34px;'
+        f'height:34px;background:{color};border-radius:6px;'
+        'margin-right:6px;border:1px solid #888;"></span>'
+        for color in profile_dict["palette"])
+    st.markdown(f"Measured palette:<br>{swatches}", unsafe_allow_html=True)
+    style_label = {"reel-dark": "Dark", "light": "Light"}[profile_dict["style"]]
+    cmap_label = profile_dict["colormap"] or "— (keep the variable default)"
+    st.write(f"**Suggested style:** {style_label}  ·  "
+             f"**Suggested colormap:** {cmap_label}")
+    for note in profile_dict["notes"]:
+        st.caption(note)
+    if not st.button("Apply this look", key=f"look_apply_{rev}",
+                     type="primary"):
+        return
+    new_dict = dict(st.session_state.get("spec_dict") or spec_dict)
+    new_dict["style"] = profile_dict["style"]
+    st.session_state["spec_dict"] = new_dict
+    if profile_dict["colormap"] and not categorical:
+        st.session_state["cmap"] = profile_dict["colormap"]
+    elif profile_dict["colormap"] and categorical:
+        st.warning("The suggested colormap does not apply here: "
+                   f"`{new_dict.get('variable')}` uses fixed scientific "
+                   "colors, so the variable default is kept. The dark/light "
+                   "style was still applied.")
+    st.success("Look applied — the style (and colormap, where it applies) "
+               "are set above.")
+    st.rerun()
+
+
 def _make_assist_fn(statuses: Dict[str, peers.PeerStatus]):
     """Build the one-shot LLM assist callable, or None when disabled."""
     viz_status = statuses["survey-viz"]
@@ -263,6 +356,8 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     if not spec_dict:
         st.info("Parse a description first (step 1).")
         return
+
+    _refine_section(statuses)
 
     if not st.button("Run — fetch, render, encode", type="primary"):
         # Show a previous result if the session already ran.
@@ -317,6 +412,54 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     _show_result()
 
 
+def _refine_section(statuses: Dict[str, peers.PeerStatus]) -> None:
+    """'Refine in plain language' — inside the Run step, before the button.
+
+    Applies a plain-language follow-up instruction to the parsed spec
+    via ``viz.refine_spec`` and shows exactly what changed (plus
+    anything not understood). Needs survey-viz >= 0.16.0; older peers
+    get the upgrade hint instead of a crash.
+    """
+    viz_status = statuses["survey-viz"]
+    viz = viz_status.module if viz_status.installed else None
+    with st.expander("Refine in plain language (optional)", expanded=False):
+        if viz is None or not hasattr(viz, "refine_spec"):
+            st.info("Plain-language refinements need survey-viz ≥ 0.16.0 — "
+                    f"upgrade it (`{viz_status.pip_command}`) to unlock them.")
+            return
+        st.caption(
+            "Describe the changes you want — e.g. “zoom in on the Gulf of "
+            "Mexico”, “use a warmer colormap”, “title it ‘Gulf Heat’”, "
+            "“run it from 2015 to 2020”, “switch to light mode”. Only the "
+            "things you mention change.")
+        text = st.text_area("Changes", key="refine_text", height=70)
+        if not st.button("Apply refinements", key="refine_apply"):
+            return
+        if not text or not text.strip():
+            st.warning("Describe the changes first.")
+            return
+        try:
+            spec = viz.VizSpec.from_dict(
+                st.session_state.get("spec_dict") or {})
+            result = viz.refine_spec(spec, text)
+        except viz.UnparseableDescription as exc:
+            st.error(str(exc))
+            return
+        except (TypeError, ValueError) as exc:  # pragma: no cover
+            st.error(f"Those refinements did not validate: {exc}")
+            return
+        st.session_state["spec_dict"] = result.spec.to_dict()
+        if result.cmap is not None:
+            st.session_state["cmap"] = result.cmap
+        st.success(f"Applied {len(result.applied)} change(s) — press "
+                   "Run below to regenerate the reel.")
+        for change in result.applied:
+            st.write(f"**{change.field}**: `{change.old}` → `{change.new}`")
+            st.caption(change.reason)
+        for note in result.unparsed:
+            st.warning(note)
+
+
 def _show_result() -> None:
     result = st.session_state.get("result")
     if not result:
@@ -342,7 +485,7 @@ def main() -> None:
     st.title("🎬 reel-studio")
     st.caption(
         "Plain-English description → Great-Lakes SST fetch → vertical "
-        "reel MP4. v0.2.0 · 100% local.")
+        "reel MP4. v0.3.0 · 100% local.")
 
     statuses = peers.load_peers()
     _peer_status_panel(statuses)

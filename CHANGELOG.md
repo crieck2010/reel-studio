@@ -2,6 +2,44 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.0] - 2026-09-27
+
+### Added
+- **Refine in plain language** (new section in step 3, before the Run
+  button): describe the changes you want ("zoom in on the Gulf of
+  Mexico", "use a warmer colormap", "title it 'Gulf Heat'", "run it
+  from 2015 to 2020", "switch to light mode") and the app applies
+  them to the parsed spec via `viz.refine_spec` — showing every
+  applied change (old → new + reason) and every unparsed note before
+  generation. Needs survey-viz >= 0.16.0; older peers get the upgrade
+  hint, never a crash.
+- **Copy the look of a reel** (new section in step 2): paste a reel
+  URL or upload a screenshot and the app reads the reference's
+  *color mood* (overall brightness + dominant hues) via
+  `viz.suggest_aesthetic`/`viz.analyze_image`, shows the measured
+  palette and the suggested dark/light style + colormap with
+  explanatory notes, and applies it on confirmation. Honest by
+  design: only the color mood is copied — fonts, layouts, and
+  transitions can't be read from a thumbnail; the video itself is
+  never downloaded (social platforms keep it behind login walls), so
+  a URL falls back to the page's preview thumbnail and a screenshot
+  upload is the most reliable input. Categorical products keep their
+  fixed scientific colors even when a reference suggests a colormap.
+  Needs survey-viz >= 0.16.0; older peers degrade gracefully.
+- `tests/test_refine_look_ui.py`: 8 stubbed-Streamlit tests covering
+  both flows (apply/unparseable/gated refinements; upload/URL/error/
+  gated look-copying) plus a real-integration test against the
+  installed survey-viz.
+
+### Fixed
+- **`Update reel-studio.bat`**: peer checkouts live *next to*
+  reel-studio (siblings under the CODE folder), but the script probed
+  `%%P\.git` *inside* reel-studio after `cd`-ing into it — the
+  existence check, `git -C`, and `pip install` now use `..\%%P`.
+  Without the fix, sibling checkouts were silently ignored and peers
+  were always reinstalled from GitHub. Pinned by an updated
+  `tests/test_updater.py`.
+
 ## [0.2.1] - 2026-09-27
 
 ### Added

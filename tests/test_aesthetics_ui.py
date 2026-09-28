@@ -37,6 +37,12 @@ class _StubStreamlit:
     def info(self, text): self.calls.append(("info", text))
     def success(self, text): self.calls.append(("success", text))
     def error(self, text): self.calls.append(("error", text))
+    def warning(self, text): self.calls.append(("warning", text))
+    def write(self, text): self.calls.append(("write", text))
+    def markdown(self, text, unsafe_allow_html=False):
+        self.calls.append(("markdown", text))
+    def image(self, data, caption=None):
+        self.calls.append(("image", caption))
     def json(self, obj): self.calls.append(("json", obj))
     def divider(self): pass
     def title(self, text): pass
@@ -44,7 +50,18 @@ class _StubStreamlit:
     def set_page_config(self, **kw): pass
     def progress(self, *a, **k): pass
     def status(self, *a, **k): pass
-    def text_area(self, label, value="", height=None, help=None):
+    def rerun(self): self.calls.append(("rerun",))
+    def expander(self, label, expanded=False):
+        self.calls.append(("expander", label))
+
+        class _Expander:
+            def __enter__(self): return None
+            def __exit__(self, *exc): return False
+
+        return _Expander()
+    def file_uploader(self, label, type=None, key=None):
+        return self._val(label, None)
+    def text_area(self, label, value="", height=None, help=None, key=None):
         return self._val(label, value)
     def text_input(self, label, value="", key=None, help=None):
         return self._val(label, value)
@@ -55,7 +72,7 @@ class _StubStreamlit:
         return self._val(label, options[index])
     def checkbox(self, label, value=False, key=None, help=None):
         return self._val(label, value)
-    def button(self, label, type="secondary", help=None):
+    def button(self, label, type="secondary", help=None, key=None):
         return bool(self._val(label, False))
 
 

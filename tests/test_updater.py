@@ -37,10 +37,14 @@ def test_updater_handles_all_three_peers():
     text = _text()
     for peer in PEERS:
         assert peer in text, f"updater never mentions {peer}"
-    # Local checkout path: pull + reinstall from the directory ...
-    assert re.search(r'if exist "%%P\\.git"', text)
-    assert 'python -m pip install --upgrade "%%P"' in text
-    # ... and the GitHub fallback path.
+    # Peers live NEXT TO the reel-studio checkout (siblings under the CODE
+    # folder), so every local path must be prefixed with "..\\" — never the
+    # bare "%%P" form, which would wrongly probe inside reel-studio itself.
+    assert 'if exist "..\\%%P\\.git"' in text
+    assert 'if exist "%%P\\.git"' not in text
+    assert 'git -C "..\\%%P" pull --ff-only' in text
+    assert 'python -m pip install --upgrade "..\\%%P"' in text
+    # ... and the GitHub fallback path when no sibling checkout exists.
     assert "git+https://github.com/crieck2010/%%P.git" in text
 
 
