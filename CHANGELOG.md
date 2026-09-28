@@ -2,6 +2,48 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.4.0] - 2026-09-28
+
+### Added
+- **Cinematic motion** (new step 3, "Cinematic motion & audio"):
+  enable/disable plus full user control — zoom mode (in/out/off) and
+  zoom speed, pan direction (8 compass points + off) and pan speed,
+  smooth crossfade transitions on/off with crossfade-step count.
+  Encoded at video time by survey-animate >= 0.2.0 (`MotionSpec`);
+  the data frames are unchanged. Refinement-phase motion intents from
+  survey-viz >= 0.17.0 ("add a slow zoom in", "pan left during the
+  video", "no camera motion") merge into these settings and each
+  applied change is shown with its reason. Older survey-animate peers
+  get the upgrade hint, never a crash.
+- **Batch queue** (new step 4, `studio/batch.py`): queue several
+  descriptions (one per line) and generate them unattended, one after
+  another. Each job snapshots your current settings (motion, audio,
+  captions, colormap) at enqueue time, gets an isolated
+  `job-<nn>-<slug>/` output folder, and carries its own status —
+  a failed job is recorded with its error + traceback and the queue
+  keeps going, so completed reels are never lost. Per-job video
+  preview + download on completion.
+- **Audio muxing** (step 3): attach your own audio file (mp3/wav/ogg/
+  flac/m4a/aac/opus/wma) — muxed under the reel via survey-animate >=
+  0.2.0 (AAC for MP4, trimmed to the video length with `-shortest`).
+  Needs survey-animate >= 0.2.0; older peers get the upgrade hint.
+  A missing audio file fails fast before the fetch, not after it.
+- **Data-driven story captions** (step 2 checkbox + step 6 display):
+  `story_captions=True` flows to survey-viz >= 0.17.0's `render_viz`,
+  which burns peak/trend captions onto the frames and records the
+  events in the frame manifest; the app lists them under the finished
+  reel with their frame ranges. Categorical products (storm tracks /
+  streamgages / earthquakes) keep their fixed scientific encodings and
+  say so instead of captioning. Needs survey-viz >= 0.17.0.
+- `pipeline.PeerTooOldError`: capability mismatches now raise a
+  dedicated error carrying the exact `pip install --upgrade` command;
+  capability detection uses signature inspection (not version
+  strings), so test doubles and mislabeled peers behave honestly.
+  Provenance records motion settings, the audio path, and the
+  captions flag.
+- Tests: `tests/test_batch.py` (8), `tests/test_pipeline_features.py`
+  (11), `tests/test_app_helpers.py` (7) — 275 non-network tests total.
+
 ## [0.3.0] - 2026-09-27
 
 ### Added

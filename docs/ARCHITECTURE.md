@@ -9,6 +9,7 @@ reel-studio/
 │   ├── __init__.py        # version
 │   ├── peers.py           # optional peer imports + MissingPeerError + wiring
 │   ├── pipeline.py        # UI-free orchestration: parse/plan/fetch/render/encode
+│   ├── batch.py           # batch queue: sequential jobs, isolated dirs, failure containment
 │   ├── llm_assist.py      # optional OpenAI-compatible assist (stdlib urllib)
 │   └── demo.py            # offline 3-description demo
 ├── tests/                 # 74 pytest tests, fully offline

@@ -368,6 +368,33 @@ four lakes' bboxes already fit the grid.
 * Provenance: `RunResult.source == "era5"`, field provenance under
   `provenance["fetch"]["era5"]` (SST adapters keep `"sst"`).
 
+## Cinematic motion + audio contract (survey-animate 0.2.0)
+
+* `wire_peers` exposes `MotionSpec` (`None` on older peers).
+* `run_pipeline(..., motion={...})` filters the dict to
+  `MOTION_SPEC_FIELDS` (zoom/zoom_speed/pan/pan_speed/smooth/
+  smooth_steps — unknown keys fail fast), builds `MotionSpec(**motion)`,
+  and passes it as `motion=` to `render_video`. Capability is checked
+  by signature inspection (`_supports_kw`); an old peer raises
+  `PeerTooOldError` carrying the exact `pip install --upgrade`
+  command. `motion=None`/`{}` is never forwarded, so old peers keep
+  working when motion is off.
+* `run_pipeline(..., audio_path=...)` validates the file exists up
+  front (fail fast before the fetch), checks `render_video` accepts
+  `audio_path`, and forwards it; survey-animate muxes AAC for MP4 with
+  `-shortest`. Provenance: `provenance["encode"]["motion"]` (dict or
+  None), `provenance["encode"]["audio_path"]` (abspath or None).
+
+## Story-captions contract (survey-viz 0.17.0)
+
+* `run_pipeline(..., story_captions=True)` passes the flag to
+  `render_viz` only when its signature accepts it; otherwise
+  `PeerTooOldError` with the upgrade command. The viz manifest
+  records events as a list at `manifest["render"]["story_captions"]`
+  (`frame_start`/`frame_end`/`text` per event); the app lists them
+  under the finished reel. Categorical products keep their fixed
+  scientific encodings and record requested-not-applied.
+
 ## Adding a new adapter (future)
 
 1. Add the region to survey-viz's gazetteer (`data/regions.yaml`) and a

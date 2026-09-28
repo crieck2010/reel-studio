@@ -205,4 +205,8 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
                       glsea.GLSEA_LON_MAX, glsea.GLSEA_LAT_MAX),
         render_viz=viz.render_viz,
         render_video=animate.render_video,
+        # survey-animate >= 0.2.0 exposes MotionSpec (zoom/pan/smooth);
+        # None on older peers, which the pipeline turns into a
+        # PeerTooOldError only when motion is actually requested.
+        MotionSpec=getattr(animate, "MotionSpec", None),
     )

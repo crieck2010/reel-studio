@@ -13,7 +13,7 @@ thin studio layer over three engines:
 * **survey-animate** — frame → MP4 encoder (`render_video`, resolves
   ffmpeg itself)
 
-## The 4-step flow
+## The 6-step flow
 
 ### Step 1 — Describe and parse
 
@@ -47,6 +47,11 @@ Style the reel before it runs:
   tracks, streamgages, and earthquakes keep their fixed scientific
   colors, and the app tells you so. Needs survey-viz ≥ 0.15.0 — with
   an older peer the app says so and keeps the default.
+* **Data-driven story captions** — burn data-driven captions onto the
+  frames: peak values ("Peak sea surface temperature: 16.2°C regional
+  mean") and significant trends, describing only what the reel shows.
+  Needs survey-viz ≥ 0.17.0; categorical products keep their fixed
+  scientific encodings and skip captions honestly.
 
 Press **Apply aesthetics** to validate the tweaks and store the spec
 that will run (the colormap applies immediately, without the button).
@@ -67,7 +72,33 @@ colors even when a reference suggests a colormap. Needs
 survey-viz ≥ 0.16.0 — with an older peer the app says so and does
 nothing.
 
-### Step 3 — Run the pipeline
+### Step 3 — Cinematic motion & audio
+
+**Cinematic camera motion** (optional, needs survey-animate ≥ 0.2.0):
+check *Enable cinematic camera motion*, then set zoom (in/out/off)
+and zoom speed, pan direction (8 compass points + off) and pan speed,
+and smooth crossfade transitions on/off with a step count. **Save
+motion settings** stores them for the next run. Plain-language motion
+instructions in step 5 ("add a slow zoom in") merge into these
+settings and each change is shown.
+
+**Audio track** (optional, needs survey-animate ≥ 0.2.0): upload your
+own audio file — it is muxed under the reel and trimmed to the video
+length (AAC for MP4). Use audio you own or have the rights to. Remove
+it any time with **Remove audio**.
+
+### Step 4 — Batch queue
+
+Add several descriptions (one per line) and press **Add to queue**:
+each becomes a job that snapshots your current settings (motion,
+audio, captions, colormap). **Run batch** generates them one after
+another, unattended — each job gets an isolated `job-<nn>-<slug>/`
+folder and its own status. A failed job is recorded with its error
+and the queue continues, so completed reels are never lost. Queued
+jobs can be removed with ✕; finished jobs cleared with **Clear
+finished**.
+
+### Step 5 — Run the pipeline
 
 **Refine in plain language** (optional) — before running, describe the
 changes you want: "zoom in on the Gulf of Mexico", "use a warmer
@@ -100,12 +131,14 @@ If the region isn't fetchable or the variable isn't supported, you get
 an **honest message naming what's missing** — the app never crashes
 on these paths.
 
-### Step 4 — Take the reel
+### Step 6 — Take the reel
 
 * Embedded video player (`st.video`)
 * **Download MP4** button
-* **Provenance** expander: fetch URLs, SHA-256 digests, the full spec
-  JSON, frame/manifest paths, encoder details
+* **Story captions** listing (when captions were generated): each
+  caption with its frame range
+* **Provenance** expander: fetch URLs, SHA-256 digests, motion/audio
+  settings, the full spec JSON, frame/manifest paths, encoder details
 
 ## The optional LLM assist
 

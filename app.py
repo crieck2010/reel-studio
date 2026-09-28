@@ -35,10 +35,30 @@ try:
 except ImportError:  # headless / tests: import still works, main() won't run
     st = None  # type: ignore
 
-from studio import llm_assist, peers, pipeline
+from studio import batch, llm_assist, peers, pipeline
 
 APP_TITLE = "reel-studio"
+APP_VERSION = "0.4.0"
 PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate")
+
+#: Minimum peer versions for the v0.4.0 features.
+MIN_VIZ_STORY = (0, 17, 0)      # story captions + motion refine intents
+MIN_ANIMATE_MOTION = (0, 2, 0)   # cinematic motion + audio muxing
+
+#: Camera-motion widget options (values are the MotionSpec vocabularies).
+ZOOM_MODES = ("off", "in", "out")
+PAN_DIRECTIONS = ("off", "up", "down", "left", "right",
+                  "up-left", "up-right", "down-left", "down-right")
+PAN_LABELS = {
+    "off": "Off", "up": "Up (north)", "down": "Down (south)",
+    "left": "Left (west)", "right": "Right (east)",
+    "up-left": "Up-left (northwest)", "up-right": "Up-right (northeast)",
+    "down-left": "Down-left (southwest)",
+    "down-right": "Down-right (southeast)",
+}
+
+#: Audio extensions the uploader accepts (ffmpeg decodes all of these).
+AUDIO_TYPES = ["mp3", "wav", "ogg", "flac", "m4a", "aac", "opus", "wma"]
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +79,39 @@ def _streamlit_is_running() -> bool:
 # ---------------------------------------------------------------------------
 # UI helpers (only called from main(), i.e. under a real Streamlit runtime)
 # ---------------------------------------------------------------------------
+
+def _peer_version_tuple(status: peers.PeerStatus) -> tuple:
+    """(major, minor, patch) of an installed peer, (0,0,0) when missing."""
+    mod = status.module if status.installed else None
+    ver = str(getattr(mod, "__version__", "0") or "0")
+    parts = []
+    for piece in ver.split(".")[:3]:
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+def _version_ok(status: peers.PeerStatus, minimum: tuple) -> bool:
+    return status.installed and _peer_version_tuple(status) >= minimum
+
+
+def _current_run_settings() -> Dict[str, Any]:
+    """Snapshot of the current single-run settings for batch jobs."""
+    return {
+        "motion": dict(st.session_state.get("motion") or {}),
+        "audio_path": st.session_state.get("audio_path"),
+        "story_captions": bool(st.session_state.get("story_captions")),
+        "cmap": st.session_state.get("cmap"),
+    }
+
+
+def _upgrade_hint(status: peers.PeerStatus, minimum: str, feature: str) -> str:
+    repo = getattr(status, "repo", "this peer")
+    return (f"{feature} needs {repo} ≥ {minimum} — upgrade it "
+            f"(`{status.pip_command}`) to unlock.")
+
 
 def _peer_status_panel(statuses: Dict[str, peers.PeerStatus]) -> None:
     st.subheader("Engine status")
@@ -211,6 +264,30 @@ def _aesthetics_step(statuses: Dict[str, peers.PeerStatus]) -> None:
 
     _copy_look_section(viz, spec_dict, categorical, rev, status)
 
+    # Story captions: needs survey-viz >= 0.17.0 (viz.insights).
+    if not _version_ok(status, MIN_VIZ_STORY):
+        st.info(_upgrade_hint(status, "0.17.0",
+                              "Data-driven story captions") +
+                " The reel renders without captions in the meantime.")
+        st.session_state["story_captions"] = False
+    elif categorical:
+        st.info("Story captions do not apply here: "
+                f"`{spec_dict.get('variable')}` uses fixed scientific "
+                "encodings (storm tracks / streamgages / earthquakes), "
+                "so no captions are generated for it.")
+        st.session_state["story_captions"] = False
+    else:
+        story_captions = st.checkbox(
+            "Data-driven story captions",
+            value=bool(st.session_state.get("story_captions")),
+            key=f"aes_story_{rev}",
+            help="Burns data-driven captions onto the frames (peak "
+                 "values and significant trends in the rendered region). "
+                 "Captions describe only what the reel shows — see the "
+                 "story-captions honesty rules in the survey-viz docs.",
+        )
+        st.session_state["story_captions"] = story_captions
+
     if not st.button(
         "Apply aesthetics",
         type="secondary",
@@ -350,8 +427,247 @@ def _make_assist_fn(statuses: Dict[str, peers.PeerStatus]):
     return assist
 
 
+def _motion_audio_step(statuses: Dict[str, peers.PeerStatus]) -> None:
+    """Step 3: cinematic camera motion + audio track.
+
+    Motion settings live in ``st.session_state["motion"]`` (a plain
+    dict of MotionSpec fields, or ``{}`` when disabled) so the refine
+    section and the batch queue can read and merge them.
+    """
+    st.subheader("3 · Cinematic motion & audio")
+    status = statuses["survey-animate"]
+    if not _version_ok(status, MIN_ANIMATE_MOTION):
+        st.info(_upgrade_hint(status, "0.2.0",
+                              "Cinematic motion and audio muxing") +
+                " The reel encodes with the peer default in the meantime.")
+        return
+
+    motion = dict(st.session_state.get("motion") or {})
+    enabled = st.checkbox(
+        "Enable cinematic camera motion",
+        value=bool(motion),
+        help="Zoom / pan the camera while the reel plays, with smooth "
+             "crossfade transitions between frames. Applied at encode "
+             "time by survey-animate — the data frames are unchanged.",
+    )
+    with st.expander("Camera settings", expanded=bool(motion)):
+        zoom = st.selectbox(
+            "Zoom",
+            options=list(ZOOM_MODES),
+            index=list(ZOOM_MODES).index(motion.get("zoom", "off")),
+            format_func=lambda v: {"off": "Off", "in": "Zoom in",
+                                   "out": "Zoom out"}[v],
+            help="Zoom in or out over the whole reel.",
+        )
+        zoom_speed = st.slider(
+            "Zoom speed", 0.0, 1.0,
+            float(motion.get("zoom_speed", 0.4)), 0.05,
+            help="0 = barely moves, 1 = up to 1.6× total zoom.",
+        )
+        pan = st.selectbox(
+            "Pan direction",
+            options=list(PAN_DIRECTIONS),
+            index=list(PAN_DIRECTIONS).index(motion.get("pan", "off")),
+            format_func=lambda v: PAN_LABELS[v],
+            help="Drift the camera across the map during the reel.",
+        )
+        pan_speed = st.slider(
+            "Pan speed", 0.0, 1.0,
+            float(motion.get("pan_speed", 0.35)), 0.05,
+            help="0 = barely moves, 1 = up to 30% of the viewport.",
+        )
+        smooth = st.checkbox(
+            "Smooth crossfade transitions",
+            value=bool(motion.get("smooth", True)),
+            help="Blend neighboring frames so motion and data changes "
+                 "play smoothly instead of stepping.",
+        )
+        smooth_steps = st.slider(
+            "Crossfade steps", 1, 10,
+            int(motion.get("smooth_steps", 3)),
+            help="Interpolated frames inserted between real frames.",
+        )
+    if st.button("Save motion settings", type="secondary"):
+        if enabled:
+            st.session_state["motion"] = {
+                "zoom": zoom, "zoom_speed": zoom_speed,
+                "pan": pan, "pan_speed": pan_speed,
+                "smooth": smooth, "smooth_steps": smooth_steps,
+            }
+            st.success("Motion settings saved — they apply to the next run.")
+        else:
+            st.session_state["motion"] = {}
+            st.success("Camera motion off — the reel encodes plain.")
+    elif motion:
+        st.caption("Current: "
+                   f"zoom={motion.get('zoom')}, pan={motion.get('pan')}, "
+                   f"smooth={motion.get('smooth')} "
+                   "(refinements in step 5 can change these).")
+
+    st.divider()
+    st.markdown("**Audio track** (optional)")
+    st.caption("Attach your own audio file — it is muxed under the reel "
+               "and trimmed to the video length. Only MP4 is produced, "
+               "so it is always AAC-encoded. Use audio you own or have "
+               "the rights to.")
+    uploaded = st.file_uploader(
+        "Choose an audio file", type=AUDIO_TYPES, key="audio_upload")
+    if uploaded is not None:
+        audio_dir = os.path.join(tempfile.gettempdir(), "reel-studio-audio")
+        os.makedirs(audio_dir, exist_ok=True)
+        audio_path = os.path.join(audio_dir, uploaded.name)
+        with open(audio_path, "wb") as fh:
+            fh.write(uploaded.getbuffer())
+        st.session_state["audio_path"] = audio_path
+        st.success(f"Audio attached: `{uploaded.name}`")
+    current_audio = st.session_state.get("audio_path")
+    if current_audio and uploaded is None:
+        st.caption(f"Attached: `{os.path.basename(current_audio)}`")
+        if st.button("Remove audio", key="audio_remove"):
+            st.session_state["audio_path"] = None
+            try:
+                os.remove(current_audio)
+            except OSError:
+                pass
+
+
+def _batch_step(statuses: Dict[str, peers.PeerStatus]) -> None:
+    """Step 4: batch queue — several descriptions, one unattended run."""
+    st.subheader("4 · Batch queue")
+    st.caption("Queue several descriptions and generate them one after "
+               "another, unattended. Each job snapshots your current "
+               "settings (motion, audio, captions, colormap) and gets its "
+               "own output folder — a failed job never loses completed "
+               "ones.")
+
+    text = st.text_area(
+        "Descriptions (one per line)", height=90, key="batch_input",
+        help="Each line becomes one job, parsed exactly like step 1.",
+    )
+    if st.button("Add to queue", type="secondary"):
+        lines = [ln.strip() for ln in (text or "").splitlines()
+                 if ln.strip()]
+        if not lines:
+            st.warning("Write at least one description first.")
+        else:
+            jobs = list(st.session_state.get("batch_jobs") or [])
+            settings = _current_run_settings()
+            for line in lines:
+                jobs.append({"description": line,
+                             "settings": dict(settings),
+                             "status": "queued"})
+            st.session_state["batch_jobs"] = jobs
+            st.success(f"Added {len(lines)} job(s) to the queue.")
+
+    jobs = list(st.session_state.get("batch_jobs") or [])
+    remove_idx: Optional[int] = None
+    for i, job in enumerate(jobs):
+        c1, c2, c3 = st.columns([7, 2, 1])
+        c1.write(job["description"])
+        c2.write(f"`{job['status']}`")
+        if job["status"] == "queued" and c3.button(
+                "✕", key=f"batch_rm_{i}", help="Remove this job"):
+            remove_idx = i
+    if remove_idx is not None:
+        jobs.pop(remove_idx)
+        st.session_state["batch_jobs"] = jobs
+
+    queued = [j for j in jobs if j["status"] == "queued"]
+    col_a, col_b = st.columns(2)
+    run_clicked = col_a.button(
+        "Run batch", type="primary",
+        disabled=not queued,
+        help="Generate every queued job, one after another.")
+    if col_b.button("Clear finished", type="secondary",
+                    disabled=not any(j["status"] in ("done", "failed",
+                                                     "skipped")
+                                     for j in jobs)):
+        st.session_state["batch_jobs"] = [
+            j for j in (st.session_state.get("batch_jobs") or [])
+            if j["status"] == "queued"]
+
+    if run_clicked:
+        _run_batch(statuses, queued)
+
+
+def _run_batch(statuses: Dict[str, peers.PeerStatus],
+               queued: list) -> None:
+    """Execute the queued jobs sequentially with per-job isolation."""
+    try:
+        wired = peers.wire_peers(statuses)
+    except peers.MissingPeerError as exc:
+        st.error(str(exc))
+        return
+
+    batch_jobs = [batch.BatchJob(description=j["description"],
+                                 settings=j["settings"]) for j in queued]
+    out_root = tempfile.mkdtemp(prefix="reel-studio-batch-")
+    progress_bar = st.progress(0.0, text="Starting batch…")
+    status_box = st.status("Running batch…", expanded=False)
+
+    def on_progress(idx: int, n: int, frac: float, message: str) -> None:
+        overall = (idx + frac) / max(n, 1)
+        progress_bar.progress(min(max(overall, 0.0), 1.0), text=message)
+        status_box.update(label=message, state="running")
+
+    def parse_fn(text: str) -> Any:
+        spec, _used = pipeline.parse_with_fallback(
+            text, wired.parse_description, wired.parse_error,
+            assist_fn=_make_assist_fn(statuses))
+        return spec
+
+    batch.run_batch(batch_jobs, wired, out_root, parse_fn,
+                    progress=on_progress)
+
+    # Merge statuses back into the session queue (matched by order).
+    jobs = list(st.session_state.get("batch_jobs") or [])
+    qi = 0
+    for job in jobs:
+        if job["status"] != "queued":
+            continue
+        bj = batch_jobs[qi]
+        qi += 1
+        job["status"] = bj.status
+        job["error"] = bj.error
+        job["out_dir"] = bj.out_dir
+        if bj.status == "done" and bj.result is not None:
+            job["video_path"] = bj.result.video_path
+            job["n_frames"] = bj.result.n_frames
+    st.session_state["batch_jobs"] = jobs
+
+    done = sum(1 for b in batch_jobs if b.status == "done")
+    failed = sum(1 for b in batch_jobs if b.status == "failed")
+    status_box.update(label="Batch complete", state="complete")
+    progress_bar.progress(1.0, text="Batch complete")
+    if failed:
+        st.warning(f"Batch finished: {done} done, {failed} failed — "
+                   "completed reels are kept, failures are listed below.")
+    else:
+        st.success(f"Batch finished: {done} reel(s) generated.")
+
+    for b in batch_jobs:
+        with st.expander(
+                f"{'✅' if b.status == 'done' else '❌'} {b.description}",
+                expanded=(b.status != "done")):
+            if b.status == "done" and b.result is not None:
+                st.video(b.result.video_path)
+                with open(b.result.video_path, "rb") as fh:
+                    st.download_button(
+                        label="Download MP4",
+                        data=fh.read(),
+                        file_name=f"{b.out_dir.rsplit('/', 1)[-1]}.mp4",
+                        mime="video/mp4",
+                        key=f"batch_dl_{b.index}",
+                    )
+            else:
+                st.error(b.error or b.status)
+                if b.detail:
+                    with st.expander("Traceback"):
+                        st.code(b.detail)
+
+
 def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
-    st.subheader("3 · Run the pipeline")
+    st.subheader("5 · Run the pipeline")
     spec_dict: Optional[Dict[str, Any]] = st.session_state.get("spec_dict")
     if not spec_dict:
         st.info("Parse a description first (step 1).")
@@ -382,12 +698,20 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     try:
         result = pipeline.run_pipeline(
             spec, wired, out_dir, progress=on_progress,
-            cmap=st.session_state.get("cmap"))
+            cmap=st.session_state.get("cmap"),
+            motion=(st.session_state.get("motion") or None),
+            audio_path=st.session_state.get("audio_path"),
+            story_captions=bool(st.session_state.get("story_captions")))
     except (pipeline.UnfetchableRegionError,
             pipeline.UnsupportedVariableError) as exc:
         progress_bar.empty()
         status_box.update(label="Nothing to fetch", state="error")
         st.warning(f"**Not fetchable — no crash, just honesty.**\n\n{exc}")
+        return
+    except pipeline.PeerTooOldError as exc:
+        progress_bar.empty()
+        status_box.update(label="Peer too old", state="error")
+        st.warning(f"**Upgrade needed — nothing was lost.**\n\n{exc}")
         return
     except peers.MissingPeerError as exc:  # pragma: no cover - wired already
         st.error(str(exc))
@@ -408,6 +732,7 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
         "provenance": result.provenance,
         "spec_dict": spec_dict,
         "n_frames": result.n_frames,
+        "manifest_path": result.manifest_path,
     }
     _show_result()
 
@@ -417,8 +742,10 @@ def _refine_section(statuses: Dict[str, peers.PeerStatus]) -> None:
 
     Applies a plain-language follow-up instruction to the parsed spec
     via ``viz.refine_spec`` and shows exactly what changed (plus
-    anything not understood). Needs survey-viz >= 0.16.0; older peers
-    get the upgrade hint instead of a crash.
+    anything not understood). Camera-motion intents (survey-viz >=
+    0.17.0) are merged into the session's motion settings from step 3.
+    Needs survey-viz >= 0.16.0; older peers get the upgrade hint
+    instead of a crash.
     """
     viz_status = statuses["survey-viz"]
     viz = viz_status.module if viz_status.installed else None
@@ -427,9 +754,14 @@ def _refine_section(statuses: Dict[str, peers.PeerStatus]) -> None:
             st.info("Plain-language refinements need survey-viz ≥ 0.16.0 — "
                     f"upgrade it (`{viz_status.pip_command}`) to unlock them.")
             return
+        if not _version_ok(viz_status, MIN_VIZ_STORY):
+            st.info("Tip: camera-motion refinements (“add a slow zoom in”) "
+                    "need survey-viz ≥ 0.17.0 — "
+                    f"`{viz_status.pip_command}`.")
         st.caption(
             "Describe the changes you want — e.g. “zoom in on the Gulf of "
-            "Mexico”, “use a warmer colormap”, “title it ‘Gulf Heat’”, "
+            "Mexico”, “add a slow zoom in during the video”, “pan left”, "
+            "“use a warmer colormap”, “title it ‘Gulf Heat’”, "
             "“run it from 2015 to 2020”, “switch to light mode”. Only the "
             "things you mention change.")
         text = st.text_area("Changes", key="refine_text", height=70)
@@ -451,11 +783,24 @@ def _refine_section(statuses: Dict[str, peers.PeerStatus]) -> None:
         st.session_state["spec_dict"] = result.spec.to_dict()
         if result.cmap is not None:
             st.session_state["cmap"] = result.cmap
-        st.success(f"Applied {len(result.applied)} change(s) — press "
-                   "Run below to regenerate the reel.")
+        motion_delta = dict(getattr(result, "motion", None) or {})
+        if motion_delta:
+            motion = dict(st.session_state.get("motion") or {})
+            motion.update(motion_delta)
+            st.session_state["motion"] = motion
+            st.success("Camera-motion settings updated from your "
+                       "instruction — review them in step 3, then press "
+                       "Run below to regenerate the reel.")
+        else:
+            st.success(f"Applied {len(result.applied)} change(s) — press "
+                       "Run below to regenerate the reel.")
         for change in result.applied:
             st.write(f"**{change.field}**: `{change.old}` → `{change.new}`")
             st.caption(change.reason)
+        for key, value in motion_delta.items():
+            st.write(f"**motion.{key}**: → `{value}`")
+            st.caption("instruction set camera-motion "
+                       f"{key} to {value!r}")
         for note in result.unparsed:
             st.warning(note)
 
@@ -464,7 +809,7 @@ def _show_result() -> None:
     result = st.session_state.get("result")
     if not result:
         return
-    st.subheader("4 · Your reel")
+    st.subheader("6 · Your reel")
     video_path = result["video_path"]
     st.video(video_path)
     with open(video_path, "rb") as fh:
@@ -476,8 +821,33 @@ def _show_result() -> None:
         )
     st.caption(
         f"{result['n_frames']} frames · sidecar: `{result['sidecar_path']}`")
+    captions = _caption_events(result.get("manifest_path"))
+    if captions:
+        with st.expander(f"Story captions ({len(captions)})"):
+            for event in captions:
+                st.write(event.get("text", ""))
+                st.caption(f"frames {event.get('frame_start')}–"
+                           f"{event.get('frame_end')}")
     with st.expander("Provenance — fetch URLs, SHA-256, spec JSON"):
         st.json(result["provenance"])
+
+
+def _caption_events(manifest_path: Optional[str]) -> list:
+    """Story-caption events from a survey-viz frame manifest (or []).
+
+    survey-viz >= 0.17.0 records them as a plain list at
+    ``manifest["render"]["story_captions"]``; each event carries
+    ``frame_start``/``frame_end``/``text``.
+    """
+    if not manifest_path:
+        return []
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    events = data.get("render", {}).get("story_captions", [])
+    return list(events) if isinstance(events, list) else []
 
 
 def main() -> None:
@@ -485,7 +855,7 @@ def main() -> None:
     st.title("🎬 reel-studio")
     st.caption(
         "Plain-English description → Great-Lakes SST fetch → vertical "
-        "reel MP4. v0.3.0 · 100% local.")
+        f"reel MP4. v{APP_VERSION} · 100% local.")
 
     statuses = peers.load_peers()
     _peer_status_panel(statuses)
@@ -493,6 +863,10 @@ def main() -> None:
     _parse_step(statuses)
     st.divider()
     _aesthetics_step(statuses)
+    st.divider()
+    _motion_audio_step(statuses)
+    st.divider()
+    _batch_step(statuses)
     st.divider()
     _run_step(statuses)
 

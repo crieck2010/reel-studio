@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
+import inspect
 import os
 import types
 from dataclasses import dataclass, field, replace
@@ -153,6 +154,50 @@ class UnfetchableRegionError(ValueError):
 
 class UnsupportedVariableError(ValueError):
     """The spec's variable has no fetch adapter yet."""
+
+
+class PeerTooOldError(RuntimeError):
+    """A requested feature needs a newer peer than the one wired in.
+
+    Carries the pip upgrade command so the UI can show the fix instead
+    of a traceback.
+    """
+
+    def __init__(self, repo: str, need: str, pip_command: str) -> None:
+        self.repo = repo
+        self.need = need
+        self.pip_command = pip_command
+        super().__init__(
+            f"'{repo}' is too old for {need} — "
+            f"upgrade it with:\n\n    {pip_command}")
+
+
+def _supports_kw(func: Callable[..., Any], name: str) -> bool:
+    """True when ``func`` accepts keyword argument ``name``.
+
+    Signature inspection (not version strings) is the capability
+    check: it keeps working with test doubles and mislabeled peers.
+    """
+    try:
+        params = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD or p.name == name
+               for p in params)
+
+
+#: Fields of survey-animate's ``MotionSpec`` (v0.2.0). The pipeline
+#: filters caller motion dicts to these so a stray key fails fast here
+#: instead of deep inside the peer.
+MOTION_SPEC_FIELDS = frozenset({
+    "zoom", "zoom_speed", "pan", "pan_speed", "smooth", "smooth_steps",
+})
+
+#: pip upgrade commands used in PeerTooOldError messages.
+_VIZ_UPGRADE = ("pip install --upgrade "
+               "git+https://github.com/crieck2010/survey-viz.git")
+_ANIMATE_UPGRADE = ("pip install --upgrade "
+                   "git+https://github.com/crieck2010/survey-animate.git")
 
 
 @dataclass
@@ -1257,6 +1302,9 @@ def run_pipeline(
     stride_days: int = DEFAULT_STRIDE_DAYS,
     stride_hours: int = DEFAULT_STRIDE_HOURS,
     cmap: Optional[str] = None,
+    motion: Optional[Dict[str, Any]] = None,
+    audio_path: Optional[str] = None,
+    story_captions: bool = False,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1268,7 +1316,8 @@ def run_pipeline(
             ``fetch_mur``, ``fetch_era5``, ``fetch_oscar``,
             ``fetch_cmems_currents`` (optional), ``fetch_oceancolor``
             (optional), ``render_viz``,
-            ``render_video``.
+            ``render_video``, ``MotionSpec`` (optional — only needed
+            when ``motion`` is given; ``None`` is fine otherwise).
         out_dir: working directory for frames + the MP4 (created if needed).
         progress: optional ``(fraction, message)`` callback.
         stride_days: time-axis stride for the daily fetch calls (SST,
@@ -1284,11 +1333,31 @@ def run_pipeline(
             peers keep working. Categorical renderers (storms,
             streamgages, earthquakes) validate but ignore it — see
             survey-viz docs.
+        motion: optional encode-time camera-motion dict, e.g.
+            ``{"zoom": "in", "zoom_speed": 0.4, "pan": "right",
+            "pan_speed": 0.3, "smooth": True, "smooth_steps": 3}``.
+            Forwarded to survey-animate >= 0.2.0 as a ``MotionSpec``;
+            older peers raise :class:`PeerTooOldError` with the upgrade
+            command. ``None``/``{}`` (default) keeps the peer default and
+            is never passed, so older survey-animate peers keep working.
+        audio_path: optional local path to a user-owned audio file
+            (mp3/wav/ogg/flac/m4a/aac) muxed under the reel via
+            survey-animate >= 0.2.0 (AAC for MP4; ``-shortest`` trims it
+            to the video length). Older peers raise
+            :class:`PeerTooOldError`. Must exist when given — checked
+            up front so a missing file fails fast instead of after a
+            long fetch.
+        story_captions: when True, pass ``story_captions=True`` to
+            survey-viz >= 0.17.0's ``render_viz`` so data-driven
+            captions are burned onto the frames and recorded in the
+            manifest. Older peers raise :class:`PeerTooOldError`.
 
     Raises:
         UnfetchableRegionError / UnsupportedVariableError: honest,
             no-crash refusals naming what is missing.
         RuntimeError: wrapped fetch failures (network, NetCDF, ...).
+        PeerTooOldError: a requested feature needs a newer peer.
+        ValueError: ``audio_path`` given but not a file.
     """
     def report(frac: float, message: str) -> None:
         if progress is not None:
@@ -1302,6 +1371,48 @@ def run_pipeline(
         raise UnfetchableRegionError(plan.reason)
     lake = plan.lake or ""
     source = plan.source or "glsea"
+
+    if audio_path is not None and not os.path.isfile(audio_path):
+        raise ValueError(
+            f"audio_path does not exist: {audio_path!r}. Pick a file "
+            "that is on this machine — the reel is 100% local, so the "
+            "audio must be a local file too.")
+
+    # -- capability checks (fail fast, with upgrade guidance) ---------------
+    # Signature inspection, not version strings, so test doubles and
+    # mislabeled peers behave honestly.
+    render_viz_kwargs: Dict[str, Any] = {}
+    if cmap is not None:
+        render_viz_kwargs["cmap"] = cmap
+    if story_captions:
+        if not _supports_kw(peers.render_viz, "story_captions"):
+            raise PeerTooOldError(
+                "survey-viz", "story captions (needs >= 0.17.0)",
+                _VIZ_UPGRADE)
+        render_viz_kwargs["story_captions"] = True
+
+    render_video_kwargs: Dict[str, Any] = {}
+    motion_spec = None
+    if motion:
+        unknown = set(motion) - MOTION_SPEC_FIELDS
+        if unknown:
+            raise ValueError(
+                f"unknown motion settings: {sorted(unknown)} — valid keys "
+                f"are {sorted(MOTION_SPEC_FIELDS)}")
+        MotionSpec = getattr(peers, "MotionSpec", None)
+        if MotionSpec is None or not _supports_kw(
+                peers.render_video, "motion"):
+            raise PeerTooOldError(
+                "survey-animate", "cinematic motion (needs >= 0.2.0)",
+                _ANIMATE_UPGRADE)
+        motion_spec = MotionSpec(**motion)
+        render_video_kwargs["motion"] = motion_spec
+    if audio_path is not None:
+        if not _supports_kw(peers.render_video, "audio_path"):
+            raise PeerTooOldError(
+                "survey-animate", "audio muxing (needs >= 0.2.0)",
+                _ANIMATE_UPGRADE)
+        render_video_kwargs["audio_path"] = audio_path
 
     os.makedirs(out_dir, exist_ok=True)
     frames_dir = os.path.join(out_dir, "frames")
@@ -1847,7 +1958,7 @@ def run_pipeline(
     frames, manifest_path = peers.render_viz(
         spec, render_field, _series_to_dict(series),
         out_dir=frames_dir,
-        **({"cmap": cmap} if cmap is not None else {}))
+        **render_viz_kwargs)
 
     # -- 3. encode ------------------------------------------------------------
     # NOTE: pass the frames DIRECTORY, not the viz manifest path:
@@ -1858,7 +1969,8 @@ def run_pipeline(
     video_path = os.path.join(out_dir, "reel.mp4")
     result = peers.render_video(
         frames_dir, video_path, preset="reel",
-        title=getattr(spec, "title", ""), burn_timestamps_=False)
+        title=getattr(spec, "title", ""), burn_timestamps_=False,
+        **render_video_kwargs)
 
     report(1.0, "Done")
 
@@ -1887,6 +1999,7 @@ def run_pipeline(
             "frames_dir": frames_dir,
             "manifest_path": manifest_path,
             "n_frames": len(frames),
+            "story_captions": story_captions,
         },
         "encode": {
             "video_path": os.path.abspath(video_path),
@@ -1894,6 +2007,9 @@ def run_pipeline(
             "fps": getattr(result, "fps", None),
             "n_frames": getattr(result, "n_frames", len(frames)),
             "video_sha256": _sha256_file(video_path),
+            "motion": dict(motion) if motion else None,
+            "audio_path": (os.path.abspath(audio_path)
+                           if audio_path is not None else None),
         },
     }
 

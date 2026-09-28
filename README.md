@@ -166,14 +166,24 @@ The app works **fully** without the key — it is never required. See
   aesthetics** validates the tweaks against the installed survey-viz and
   shows the spec that will run. **Copy the look of a reel** — paste a reel
   URL or upload a screenshot to copy its color mood (dark/light style +
-  colormap suggestion).
-* **Step 3** — **Refine in plain language** ("zoom in on the Gulf of Mexico
-  and use a warmer colormap"), then the **Run** button, progress bar with
-  live status messages ("Fetching
-  NOAA GLSEA sea-surface-temperature grid…", "Rendering reel frames…", "Encoding
-  MP4…").
-* **Step 4** — embedded video player, **Download MP4** button, and a *Provenance*
-  expander with fetch URLs, SHA-256 digests, and the spec.
+  colormap suggestion). **Data-driven story captions** — burn
+  peak/trend captions onto the frames (needs survey-viz ≥ 0.17.0).
+* **Step 3 — Cinematic motion & audio** — enable camera motion and set
+  zoom mode/speed, pan direction/speed, and crossfade smoothing; attach
+  your own audio file to mux under the reel (needs survey-animate ≥
+  0.2.0).
+* **Step 4 — Batch queue** — add several descriptions (one per line),
+  each snapshotting your current settings, and generate them
+  unattended, one after another. A failed job never loses completed
+  ones.
+* **Step 5** — **Refine in plain language** ("zoom in on the Gulf of Mexico
+  and use a warmer colormap", "add a slow zoom in during the video"),
+  then the **Run** button, progress bar with live status messages
+  ("Fetching NOAA GLSEA sea-surface-temperature grid…", "Rendering
+  reel frames…", "Encoding MP4…").
+* **Step 6** — embedded video player, **Download MP4** button, story-caption
+  listing when captions were generated, and a *Provenance* expander with
+  fetch URLs, SHA-256 digests, motion/audio settings, and the spec.
 
 ## Docs
 
@@ -189,9 +199,10 @@ The app works **fully** without the key — it is never required. See
 pytest tests/
 ```
 
-The suite covers the UI-free pipeline (`studio/pipeline.py`), peer wiring with graceful
-degradation, source selection, provenance, and the offline demo. Fresh-clone verified
-against the released peers: 249 passed.
+The suite covers the UI-free pipeline (`studio/pipeline.py`), the batch
+queue (`studio/batch.py`), peer wiring with graceful degradation, source
+selection, provenance, and the offline demo. Fresh-clone verified
+against the released peers: 275 passed.
 
 ## Manual smoke check
 
