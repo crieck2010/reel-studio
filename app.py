@@ -35,12 +35,12 @@ try:
 except ImportError:  # headless / tests: import still works, main() won't run
     st = None  # type: ignore
 
-from studio import batch, llm_assist, peers, pipeline, styling
+from studio import batch, llm_assist, peers, pipeline, scheduler, styling
 
 APP_TITLE = "reel-studio"
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.7.0"
 PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate",
-              "survey-layout", "survey-style")
+              "survey-layout", "survey-style", "survey-schedule")
 
 #: Minimum peer versions for the v0.4.0 features.
 MIN_VIZ_STORY = (0, 17, 0)      # story captions + motion refine intents
@@ -855,8 +855,138 @@ def _run_batch(statuses: Dict[str, peers.PeerStatus],
                         st.code(b.detail)
 
 
+def _schedule_step(statuses: Dict[str, peers.PeerStatus]) -> None:
+    """Step 6: scheduled generation (survey-schedule peer)."""
+    st.subheader("6 · Scheduled generation")
+    sched_status = statuses["survey-schedule"]
+    if not sched_status.installed:
+        st.info(
+            "Scheduled generation — unattended reels on a cron, interval, "
+            "or one-shot schedule — needs the optional `survey-schedule` "
+            "peer. One-off and batch generation keep working without it.")
+        st.code(sched_status.pip_command)
+        return
+    schedx = sched_status.module
+    jobs_dir = scheduler.default_jobs_dir()
+    st.caption(
+        "Put the reel factory on autopilot: a job reuses a description "
+        "plus your current run settings on a schedule. "
+        f"Jobs live in `{jobs_dir}` (one JSON file each, hand-editable). "
+        "A ticker runs them — cron on Linux or Task Scheduler on Windows, "
+        "every minute — and every attempt lands in the ledger below. "
+        "Honest limit: the PC must be on at run time; a missed run is "
+        "skipped unless the job says `run-once`.")
+
+    st.markdown("**New scheduled job**")
+    st.session_state.setdefault("sched_expr", "cron:0 6 * * mon")
+    name = st.text_input(
+        "Job name (lowercase slug)", key="sched_name",
+        help="e.g. weekly-sst — becomes the JSON file name.")
+    description = st.text_area(
+        "Description", key="sched_description",
+        value=st.session_state.get("description") or "",
+        help="Parsed exactly like step 1 when the job runs.")
+    schedule_expr = st.text_input(
+        "Schedule", key="sched_expr",
+        help="`cron:<minute hour dom month dow>` (e.g. cron:0 6 * * mon), "
+             "`every:<n>s|m|h|d|w` (e.g. every:1w), or `once:<ISO datetime>` "
+             "(e.g. once:2026-10-01T06:00).")
+    col_tz, col_catch, col_ret = st.columns(3)
+    timezone = col_tz.text_input(
+        "Timezone", value="local", key="sched_tz",
+        help="IANA name like America/New_York, or `local` (this machine).")
+    catchup = col_catch.selectbox(
+        "If a run is missed", ["skip", "run-once"], key="sched_catchup",
+        help="`skip`: one ledger entry, never backfilled. `run-once`: "
+             "execute once at the next tick, then resume.")
+    retries = int(col_ret.number_input(
+        "Retries on failure", min_value=0, max_value=5, value=0,
+        key="sched_retries"))
+    enabled = st.checkbox("Enabled", value=True, key="sched_enabled")
+
+    try:
+        st.caption("📅 " + schedx.describe_schedule(schedule_expr))
+        schedule_ok = True
+    except Exception as exc:
+        st.warning(f"Schedule problem: {exc}")
+        schedule_ok = False
+
+    settings = _current_run_settings()
+    st.caption(
+        "Snapshot with this job: motion, audio, story captions, colormap, "
+        f"platform (`{settings.get('platform')}`), style preset "
+        f"(`{settings.get('style_preset')}`). Strides stay default — "
+        "hand-edit the job JSON for `stride_days` / `stride_hours`.")
+
+    if st.button("Create scheduled job", type="secondary",
+                 disabled=not schedule_ok):
+        if not (name or "").strip():
+            st.warning("Give the job a name first.")
+        elif not (description or "").strip():
+            st.warning("Give the job a description first.")
+        else:
+            try:
+                job = schedx.Job(
+                    name=name.strip(), description=description.strip(),
+                    schedule=schedule_expr.strip(), settings=settings,
+                    enabled=bool(enabled), timezone=timezone.strip(),
+                    catchup=catchup, retries=retries)
+                schedx.JobStore(jobs_dir).save_job(job)
+            except Exception as exc:
+                st.error(f"Could not create the job: {exc}")
+            else:
+                st.success(f"Scheduled job `{job.name}` created — next run "
+                           "shown below once the ticker ticks.")
+                st.session_state["sched_name"] = ""
+
+    st.divider()
+    st.markdown("**Jobs**")
+    store = schedx.JobStore(jobs_dir)
+    jobs = store.list_jobs()
+    if not jobs:
+        st.caption("No scheduled jobs yet.")
+    for job in jobs:
+        nxt = scheduler.next_run_iso(statuses, job) or "—"
+        c1, c2, c3, c4, c5 = st.columns([3, 3, 3, 1, 1])
+        c1.write(f"**{job.name}**")
+        c2.write(f"`{job.schedule}`")
+        c3.write(f"next: `{nxt}`")
+        if c4.button("⏸️" if job.enabled else "▶️",
+                     key=f"sched_toggle_{job.name}",
+                     help="Disable" if job.enabled else "Enable"):
+            toggled = schedx.job_from_dict(
+                {**schedx.job_to_dict(job), "enabled": not job.enabled})
+            store.save_job(toggled)
+            st.rerun()
+        if c5.button("🗑️", key=f"sched_del_{job.name}",
+                     help="Delete this job"):
+            store.delete_job(job.name)
+            st.rerun()
+
+    st.divider()
+    st.markdown("**Ticker**")
+    st.caption(
+        "Run this every minute (Windows Task Scheduler or Linux cron) "
+        "from the reel-studio folder:")
+    st.code(f"python -m studio.scheduler run-due --jobs-dir \"{jobs_dir}\"")
+
+    st.markdown("**Recent runs**")
+    probe = schedx.Runner(store, schedx.null_executor,
+                          scheduler.default_out_root())
+    records = probe.ledger_tail(10)
+    if not records:
+        st.caption("Nothing in the ledger yet.")
+    for record in records:
+        icon = {"ok": "✅", "failed": "❌", "skipped": "⏭️"}.get(
+            record.status, "•")
+        st.write(f"{icon} `{record.job}` — {record.status} "
+                 f"(attempt {record.attempt}) · {record.finished_at}")
+        if record.error:
+            st.caption(f"error: {record.error}")
+
+
 def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
-    st.subheader("6 · Run the pipeline")
+    st.subheader("7 · Run the pipeline")
     spec_dict: Optional[Dict[str, Any]] = st.session_state.get("spec_dict")
     if not spec_dict:
         st.info("Parse a description first (step 1).")
@@ -1002,7 +1132,7 @@ def _show_result() -> None:
     result = st.session_state.get("result")
     if not result:
         return
-    st.subheader("7 · Your reel")
+    st.subheader("8 · Your reel")
     video_path = result["video_path"]
     st.video(video_path)
     with open(video_path, "rb") as fh:
@@ -1073,6 +1203,8 @@ def main() -> None:
     _motion_audio_step(statuses)
     st.divider()
     _batch_step(statuses)
+    st.divider()
+    _schedule_step(statuses)
     st.divider()
     _run_step(statuses)
 

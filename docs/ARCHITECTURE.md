@@ -10,9 +10,13 @@ reel-studio/
 │   ├── peers.py           # optional peer imports + MissingPeerError + wiring
 │   ├── pipeline.py        # UI-free orchestration: parse/plan/fetch/render/encode
 │   ├── batch.py           # batch queue: sequential jobs, isolated dirs, failure containment
+│   ├── styling.py         # style-preset seam (survey-style peer, optional)
+│   ├── scheduler.py       # scheduled-generation bridge (survey-schedule
+│   │                      # peer, optional) + `python -m studio.scheduler`
+│   │                      # ticker entrypoint
 │   ├── llm_assist.py      # optional OpenAI-compatible assist (stdlib urllib)
 │   └── demo.py            # offline 3-description demo
-├── tests/                 # 290 pytest tests, fully offline
+├── tests/                 # 312 pytest tests, fully offline
 ├── requirements.txt       # streamlit, numpy, matplotlib, netCDF4 (+ pytest)
 └── docs/
     ├── APP.md             # user guide

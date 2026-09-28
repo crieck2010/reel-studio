@@ -13,7 +13,7 @@ thin studio layer over three engines:
 * **survey-animate** — frame → MP4 encoder (`render_video`, resolves
   ffmpeg itself)
 
-## The 7-step flow
+## The 8-step flow
 
 ### Step 1 — Describe and parse
 
@@ -127,7 +127,36 @@ and the queue continues, so completed reels are never lost. Queued
 jobs can be removed with ✕; finished jobs cleared with **Clear
 finished**.
 
-### Step 6 — Run the pipeline
+### Step 6 — Scheduled generation
+
+Put the reel factory on autopilot (needs the survey-schedule peer;
+without it this step shows the install command and everything else
+keeps working). **New scheduled job**: a name (lowercase slug), a
+description (parsed exactly like step 1 when the job runs), and a
+schedule — `cron:<minute hour dom month dow>` (e.g. `cron:0 6 * * mon`
+for Mondays at 06:00), `every:<n>s|m|h|d|w` (e.g. `every:1w`), or
+`once:<ISO datetime>` (e.g. `once:2026-10-01T06:00`). The step shows a
+plain-words reading of the schedule ("at 06:00 on Mon") before you
+commit.
+
+Each job snapshots your current run settings (motion, audio, story
+captions, colormap, platform, style preset) — strides stay default
+unless you hand-edit the job JSON. Timezone is an IANA name or
+`local`. If a run is missed, `skip` (default) writes one ledger entry
+and never backfills; `run-once` executes once at the next tick, then
+resumes. Failures are retried in-run up to 5 times per your setting.
+
+**Jobs** lists every job with its next run; ⏸️/▶️ toggles it, 🗑️
+deletes it. **Ticker** shows the command to run every minute —
+`python -m studio.scheduler run-due` from the reel-studio folder via
+Windows Task Scheduler or Linux cron. **Recent runs** tails the
+ledger. Honest limit: the PC must be on at run time. Jobs live as
+JSON files in `~/.reel-studio/jobs`
+(`REEL_STUDIO_JOBS_DIR` overrides); runs land in
+`~/.reel-studio/scheduled-runs` (`REEL_STUDIO_SCHEDULED_OUT`
+overrides).
+
+### Step 7 — Run the pipeline
 
 **Refine in plain language** (optional) — before running, describe the
 changes you want: "zoom in on the Gulf of Mexico", "use a warmer
@@ -161,7 +190,7 @@ If the region isn't fetchable or the variable isn't supported, you get
 an **honest message naming what's missing** — the app never crashes
 on these paths.
 
-### Step 7 — Take the reel
+### Step 8 — Take the reel
 
 * Embedded video player (`st.video`)
 * **Download MP4** button

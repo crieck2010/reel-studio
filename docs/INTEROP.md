@@ -457,3 +457,34 @@ four lakes' bboxes already fit the grid.
 2. Extend `studio/pipeline.py`: `FETCHABLE_REGION_TO_LAKE` (or a new
    mapping), `SUPPORTED_VARIABLES`, and the `plan_fetch` branches.
 3. Document the new contract here.
+
+## Scheduled-generation contract (survey-schedule v0.1.0)
+
+* `studio/scheduler.py` is the UI-free seam between reel-studio and
+  the `schedx` engine. `schedx` is duck-typed the other way too: the
+  engine never imports reel-studio — it calls an executor
+  `(job, run_dir) -> dict`, and reel-studio supplies
+  `execute_reel_job(job, run_dir, statuses)`.
+* `execute_reel_job` wires peers, parses `job.description` with
+  `parse_with_fallback` (deterministic parser; one LLM assist attempt
+  only when `LLM_API_KEY` is set, exactly like an interactive run),
+  maps `job.settings` through the same `JOB_SETTING_KEYS` contract as
+  batch jobs (`motion`, `audio_path`, `story_captions`, `cmap`,
+  `stride_days`, `stride_hours`, `platform`, `style_preset`; unknown
+  keys ignored), and calls `run_pipeline` into the runner-provided
+  `run_dir`. It returns `{"video_path", "n_frames"}` for the ledger's
+  `detail`; any exception becomes a `failed` ledger entry (retried per
+  the job's `retries`).
+* `python -m studio.scheduler run-due [--jobs-dir DIR] [--out-root DIR]`
+  is the ticker entrypoint: one `schedx.Runner.tick()`, then exit.
+  Jobs default to `~/.reel-studio/jobs` (`REEL_STUDIO_JOBS_DIR`
+  overrides); runs to `~/.reel-studio/scheduled-runs`
+  (`REEL_STUDIO_SCHEDULED_OUT` overrides).
+* The dataset/source choice stays in `survey-viz.parse_description`
+  at run time — the scheduler carries the description string, never a
+  dataset decision. Geometry and styling flow through the existing
+  `platform` / `style_preset` settings, applied by the same code paths
+  as interactive runs.
+* Without the survey-schedule peer the Schedule step shows the exact
+  install command; `require_schedx` raises `MissingPeerError` naming
+  the fix. Same optional-peer pattern as survey-layout/survey-style.

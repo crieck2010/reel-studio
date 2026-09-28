@@ -21,7 +21,7 @@ def test_load_peers_returns_five_statuses():
     statuses = peers.load_peers()
     assert set(statuses) == {"survey-viz", "survey-currents",
                              "survey-animate", "survey-layout",
-                             "survey-style"}
+                             "survey-style", "survey-schedule"}
     for repo, status in statuses.items():
         assert isinstance(status, peers.PeerStatus)
         assert status.repo == repo

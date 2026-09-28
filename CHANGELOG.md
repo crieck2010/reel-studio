@@ -2,6 +2,34 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.0] - 2026-09-28
+
+### Added
+- **Scheduled generation** (new survey-schedule peer, optional sixth
+  engine): step 6, **Scheduled generation**, turns the reel factory on
+  autopilot. A job = a description + a snapshot of the current run
+  settings (motion, audio, story captions, colormap, platform, style
+  preset) + a schedule — `cron:<5 fields>`, `every:<n>s|m|h|d|w`, or
+  `once:<ISO datetime>` — with a plain-words preview before creation,
+  per-job timezone, missed-run policy (`skip`: one ledger entry, never
+  backfilled; `run-once`: execute once at the next tick), and
+  in-run retries. Jobs live as JSON files in `~/.reel-studio/jobs`
+  (`REEL_STUDIO_JOBS_DIR` overrides); the Jobs list shows each next
+  run with enable/disable and delete; Recent runs tails the ledger.
+- `studio/scheduler.py`: the UI-free bridge — `execute_reel_job`
+  (parses the description exactly like an interactive run, maps
+  settings through the batch `JOB_SETTING_KEYS` contract, runs
+  `run_pipeline` into the runner's directory, returns
+  `video_path`/`n_frames` for the ledger) and the ticker entrypoint
+  `python -m studio.scheduler run-due` (one tick, then exit; wire to
+  Task Scheduler on Windows or cron on Linux, every minute). Honest
+  limit, stated in the UI and docs: the PC must be on at run time.
+- `Update reel-studio.bat` now upgrades all six peers and prints all
+  six installed versions.
+- Without the survey-schedule peer the Schedule step shows the exact
+  install command and one-off/batch generation keep working — same
+  optional-peer pattern as survey-layout/survey-style.
+
 ## [0.6.0] - 2026-09-28
 
 ### Added
