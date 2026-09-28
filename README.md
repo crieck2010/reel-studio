@@ -79,17 +79,28 @@ streamlit run app.py
 ```
 
 Your browser opens to `http://localhost:8501` (paste it manually if it doesn't). The
-3-step flow:
+4-step flow:
 
 1. **Describe** — type a description, press **Parse**. The deterministic parser turns it
    into a `VizSpec`, shown as JSON for confirmation: region, bbox, variable, pinned
    source, the reason that source was chosen, dates, title.
-2. **Run** — press **Run**. The pipeline fetches the data (progress bar + status
+2. **Aesthetics** — pick Dark/Light style, edit the title, add an optional footer
+   caption, toggle the basemap underlay, and choose a colormap (continuous data maps
+   only). Press **Apply aesthetics** to store the spec that will run.
+3. **Run** — press **Run**. The pipeline fetches the data (progress bar + status
    messages), renders the frames, and encodes the MP4. Anything the stack can't answer
    gets an honest message naming what's missing — no crash.
-3. **Take the reel** — embedded video player, **Download MP4** button, and a
+4. **Take the reel** — embedded video player, **Download MP4** button, and a
    *Provenance* expander with the exact fetch URLs, SHA-256 hashes, and the full spec
    (every frame is reproducible from what's listed there).
+
+## Updating
+
+No command line needed: double-click **`Update reel-studio.bat`** in the repo folder.
+It git-pulls reel-studio, upgrades the three peer engines (survey-viz, survey-currents,
+survey-animate) — from a local checkout when one sits next to the repo, otherwise
+straight from GitHub — and prints the installed versions for confirmation. Run it any
+time a new release is announced, then launch with the **Reel Studio** desktop icon.
 
 Fully offline demo (no network, no key, no ffmpeg):
 

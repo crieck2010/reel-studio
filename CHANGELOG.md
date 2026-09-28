@@ -2,6 +2,19 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.1] - 2026-09-27
+
+### Added
+- **`Update reel-studio.bat`**: one-click Windows updater (double-click,
+  no command line). Git-pulls reel-studio, then upgrades the three peer
+  engines — from a local checkout when one sits next to the repo,
+  otherwise straight from GitHub — and prints the installed peer
+  versions for confirmation. Guards against a missing git with the
+  `winget install Git.Git` fix. Content-covered by
+  `tests/test_updater.py` (the script itself can't execute on Linux).
+- README: new "Updating" section; the Run walkthrough updated to the
+  4-step flow.
+
 ## [0.2.0] - 2026-09-27
 
 ### Added
