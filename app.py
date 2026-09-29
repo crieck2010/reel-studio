@@ -40,7 +40,7 @@ except ImportError:  # headless / tests: import still works, main() won't run
 from studio import batch, caching, llm_assist, peers, pipeline, scheduler, styling
 
 APP_TITLE = "reel-studio"
-APP_VERSION = "0.11.0"
+APP_VERSION = "0.12.0"
 PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate",
               "survey-layout", "survey-style", "survey-schedule",
               "survey-publish")

@@ -1429,6 +1429,7 @@ def run_pipeline(
     style_preset: Optional[str] = None,
     cache: Any = None,
     derived: Optional[Dict[str, Any]] = None,
+    title_card: bool = True,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1522,6 +1523,15 @@ def run_pipeline(
             grace (already an anomaly), firms (no stride), gebco
             (static), ibtracs/usgs/comcat (not gridded fields) raise
             :class:`ValueError` naming the reason.
+        title_card: when True (default), the encode step prepends the
+            survey-animate full-screen title card (spec.title, ~2s) to
+            the reel. When False, no title card is rendered — the
+            effective title passed to ``render_video`` and to the
+            encode-cache key is ``""``. The in-frame title burned by
+            survey-viz into each frame header is unaffected either way.
+            Set False for cover-page-free reels (e.g. the daily
+            scheduled reels, where 60 title frames can dwarf a handful
+            of data frames).
 
     Raises:
         UnfetchableRegionError / UnsupportedVariableError: honest,
@@ -2409,6 +2419,12 @@ def run_pipeline(
     video_path = os.path.join(out_dir, "reel.mp4")
     # -- encode cache: the video is keyed by the frame *content* keys
     # plus the encode inputs, so an identical reel never re-runs ffmpeg.
+    # Title card: when title_card=False the effective title is "" for
+    # BOTH the encoder (render_video renders no card for a falsy title)
+    # and the cache key, so a card-less reel never collides with a
+    # carded one in the cache. The in-frame title burned by survey-viz
+    # into each frame header is unaffected either way.
+    encode_title = (getattr(spec, "title", "") or "") if title_card else ""
     video_cache_key: Optional[str] = None
     cached_video_meta = None
     if cache is not None:
@@ -2419,7 +2435,7 @@ def run_pipeline(
                 audio_content_key = cachex.fingerprint_file(audio_path)
         video_cache_key = caching.video_key(
             frame_content_keys, encode_preset,
-            getattr(spec, "title", "") or "",
+            encode_title,
             render_video_kwargs, audio_content_key=audio_content_key)
         cache_report["video_tag"] = caching.video_tag(video_cache_key)
         cached_video_meta = caching.restore_video(
@@ -2431,7 +2447,7 @@ def run_pipeline(
     else:
         result = peers.render_video(
             frames_dir, video_path, preset=encode_preset,
-            title=getattr(spec, "title", ""), burn_timestamps_=False,
+            title=encode_title, burn_timestamps_=False,
             **render_video_kwargs)
         if cache is not None and video_cache_key is not None:
             caching.store_video(cache, video_cache_key, video_path, {

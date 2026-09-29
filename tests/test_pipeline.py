@@ -172,6 +172,117 @@ def test_render_video_gets_frames_dir_not_manifest(tmp_path):
     assert seen_sources[0].endswith("frames")
 
 
+def _peers_capturing_title(calls):
+    """Variant fake peers that record the title kwarg of render_video."""
+    seen_titles = []
+
+    def _guard(name):
+        def deco(fn):
+            def wrapper(*a, **k):
+                calls.append(name)
+                return fn(*a, **k)
+            return wrapper
+        return deco
+
+    @_guard("is_fetchable")
+    def is_fetchable(key):
+        return True
+
+    @_guard("fetch_sst")
+    def fetch_sst(bbox, start, end, stride_days=30):
+        return FakeField()
+
+    @_guard("fetch_averages")
+    def fetch_averages(lake, start, end):
+        return FakeSeries()
+
+    @_guard("render_viz")
+    def render_viz(spec, field, series, out_dir):
+        os.makedirs(out_dir, exist_ok=True)
+        frames = []
+        for i in range(2):
+            p = os.path.join(out_dir, f"frame_{i+1:04d}.png")
+            with open(p, "wb") as fh:
+                fh.write(b"\x89PNG\r\n\x1a\n")
+            frames.append(p)
+        manifest = os.path.join(out_dir, "manifest.json")
+        with open(manifest, "w") as fh:
+            fh.write("{}")
+        return frames, manifest
+
+    @_guard("render_video")
+    def render_video(source, out_path, preset="reel", **kwargs):
+        seen_titles.append(kwargs.get("title"))
+        with open(out_path, "wb") as fh:
+            fh.write(b"FAKEMP4")
+        return types.SimpleNamespace(video_path=out_path,
+                                     sidecar_path=out_path + ".provenance.json",
+                                     fps=30.0, n_frames=2,
+                                     width=1080, height=1920)
+
+    peers = types.SimpleNamespace(
+        is_fetchable=is_fetchable,
+        fetch_sst=fetch_sst,
+        fetch_averages=fetch_averages,
+        render_viz=render_viz,
+        render_video=render_video,
+        glsea_bounds=(-92.4199507342304, 38.8749871947297,
+                      -75.8816402880531, 50.6059751976539),
+    )
+    return peers, seen_titles
+
+
+def test_title_card_false_passes_empty_title_to_render_video(tmp_path):
+    """title_card=False: no full-screen cover page — render_video gets
+    title=\"\" (falsy, so survey-animate renders no card)."""
+    calls = []
+    peers, seen_titles = _peers_capturing_title(calls)
+    pipeline.run_pipeline(FakeSpec(), peers, str(tmp_path), title_card=False)
+    assert seen_titles == [""]
+
+
+def test_title_card_defaults_true_passes_spec_title(tmp_path):
+    """Default behavior unchanged: the spec title reaches render_video."""
+    calls = []
+    peers, seen_titles = _peers_capturing_title(calls)
+    pipeline.run_pipeline(FakeSpec(), peers, str(tmp_path))
+    assert seen_titles == [FakeSpec().title]
+
+
+def test_title_card_false_uses_empty_title_in_cache_key(tmp_path, monkeypatch):
+    """The encode-cache key must use the effective title too, so a
+    card-less reel never collides with a carded one in the cache."""
+    from studio import caching
+    calls = []
+    peers, _ = _peers_capturing_title(calls)
+    seen_keys = {}
+
+    def fake_video_key(frame_keys, preset, title, kwargs, **kw):
+        seen_keys["title"] = title
+        return "k"
+
+    monkeypatch.setattr(caching, "video_key", fake_video_key)
+    monkeypatch.setattr(caching, "video_tag", lambda k: "tag")
+    monkeypatch.setattr(caching, "restore_video",
+                        lambda cache, key, path: None)
+    monkeypatch.setattr(caching, "store_video",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(caching, "frame_batch_key",
+                        lambda *a, **k: "fb")
+    monkeypatch.setattr(caching, "frames_tag", lambda k: "ftag")
+    monkeypatch.setattr(caching, "restore_frame_batch",
+                        lambda cache, key, d: None)
+    monkeypatch.setattr(caching, "store_frame_batch",
+                        lambda cache, key, frames, manifest: {
+                            "frames": ["c" * 64 for _ in frames]})
+    pipeline.run_pipeline(FakeSpec(), peers, str(tmp_path),
+                          cache=object(), title_card=False)
+    assert seen_keys["title"] == ""
+    pipeline.run_pipeline(FakeSpec(), peers, str(tmp_path / "b"),
+                          cache=object())
+    assert seen_keys["title"] == FakeSpec().title
+
+
 def test_bbox_clamped_to_glsea_grid(tmp_path):
     """lake-superior's gazetteer bbox (-92.5) is west of the GLSEA floor;
     the pipeline clamps it instead of letting validate_glsea_bbox blow up."""

@@ -2,6 +2,18 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.12.0] - 2026-09-29
+
+### Added
+- Optional title card: `run_pipeline(..., title_card=False)` skips the
+  survey-animate full-screen cover page. The effective title passed to
+  both `render_video` and the encode-cache key is `""` (falsy, so no
+  card renders), keeping card-less and carded reels from colliding in
+  the cache. Default `True` — no behavior change for existing callers.
+  The in-frame title burned by survey-viz into each frame header is
+  unaffected either way. Built for the daily scheduled reels, where a
+  60-frame cover page can dwarf a handful of data frames.
+
 ## [0.11.0] - 2026-09-28
 
 ### Added
