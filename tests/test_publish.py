@@ -103,8 +103,13 @@ def test_record_publication_tolerates_corrupt_manifest(pipeline_module,
 # --- app helpers ----------------------------------------------------------------
 
 
-def test_publish_peer_returns_none_when_missing(app_module):
-    # survey-publish is not installed in this environment.
+def test_publish_peer_returns_none_when_missing(app_module, monkeypatch):
+    # Simulate survey-publish not being installed, regardless of the ambient
+    # environment: an explicit None entry makes `import publish...` raise
+    # ImportError even when the real peer is importable.
+    monkeypatch.setitem(sys.modules, "publish", None)
+    monkeypatch.delitem(sys.modules, "publish.models", raising=False)
+    monkeypatch.delitem(sys.modules, "publish.registry", raising=False)
     assert app_module._publish_peer() is None
 
 
