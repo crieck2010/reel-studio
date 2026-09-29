@@ -17,12 +17,13 @@ inspectable reason it was chosen. No LLM is required at runtime.
 | Repo | Role | Version tested |
 |---|---|---|
 | [survey-currents](https://github.com/crieck2010/survey-currents) | Data-fetch engines for all 13 sources | v0.15.0 |
-| [survey-viz](https://github.com/crieck2010/survey-viz) | Description parser + reel frame renderer | v0.18.0 |
+| [survey-viz](https://github.com/crieck2010/survey-viz) | Description parser + reel frame renderer | v0.19.0 |
 | [survey-animate](https://github.com/crieck2010/survey-animate) | Frames → MP4 encoder (resolves ffmpeg) | v0.2.0 |
 | [survey-layout](https://github.com/crieck2010/survey-layout) | Platform aspect ratios + safe-zone canvases (optional) | v0.1.0 |
 | [survey-style](https://github.com/crieck2010/survey-style) | Reusable style presets for the Aesthetics step (optional) | v0.1.0 |
 | [survey-schedule](https://github.com/crieck2010/survey-schedule) | Scheduled generation: cron/interval/once jobs + run ledger (optional) | v0.1.0 |
 | [survey-cache](https://github.com/crieck2010/survey-cache) | Smarter render caching: content-addressed frame/MP4 reuse (optional) | v0.1.0 |
+| [survey-derive](https://github.com/crieck2010/survey-derive) | Climatological anomaly products (optional) | v0.1.0 |
 | **reel-studio** (this repo) | Streamlit web app + UI-free pipeline orchestration | — |
 
 ## Supported data sources
@@ -125,8 +126,8 @@ Your browser opens to `http://localhost:8501` (paste it manually if it doesn't).
 ## Updating
 
 No command line needed: double-click **`Update reel-studio.bat`** in the repo folder.
-It git-pulls reel-studio, upgrades the seven peer engines (survey-viz, survey-currents,
-survey-animate, survey-layout, survey-style, survey-schedule, survey-cache) — from a local checkout when one sits next to the repo, otherwise
+It git-pulls reel-studio, upgrades the eight peer engines (survey-viz, survey-currents,
+survey-animate, survey-layout, survey-style, survey-schedule, survey-cache, survey-derive) — from a local checkout when one sits next to the repo, otherwise
 straight from GitHub — and prints the installed versions for confirmation. Run it any
 time a new release is announced, then launch with the **Reel Studio** desktop icon.
 
@@ -179,7 +180,7 @@ The app works **fully** without the key — it is never required. See
 
 ## What you'll see
 
-* **Engine status** — seven badges (survey-viz / survey-currents / survey-animate / survey-layout / survey-style / survey-schedule / survey-cache),
+* **Engine status** — eight badges (survey-viz / survey-currents / survey-animate / survey-layout / survey-style / survey-schedule / survey-cache / survey-derive),
   green when installed, amber with the exact install command when missing.
 * **Step 1** — text area with an example description, **Parse** button, then the parsed
   `VizSpec` rendered as JSON (title, `region_key`, `bbox`, `variable`, pinned `source`
@@ -220,7 +221,10 @@ The app works **fully** without the key — it is never required. See
   of re-rendering (cache keys fingerprint the spec, the fetched-data bytes, the
   render/encode settings, and the peer versions, so new satellite data always
   re-renders honestly). Toggle per run, inspect usage, clear on demand.
-* **Step 7** — **Refine in plain language** ("zoom in on the Gulf of Mexico
+* **Step 7** — **Derived product: climatological anomaly** (optional) — render
+  the anomaly instead of the raw variable (anomaly / standardized anomaly /
+  percent of normal vs a user-chosen baseline period, default 1991–2020),
+  then **Refine in plain language** ("zoom in on the Gulf of Mexico
   and use a warmer colormap", "add a slow zoom in during the video"),
   then the **Run** button, progress bar with live status messages
   ("Fetching NOAA GLSEA sea-surface-temperature grid…", "Rendering
@@ -235,6 +239,8 @@ The app works **fully** without the key — it is never required. See
 * [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the code is organized
 * [docs/INTEROP.md](docs/INTEROP.md) — peer contracts + the interop quirks discovered
   during the 13-source build program (read before extending)
+* [docs/DERIVED.md](docs/DERIVED.md) — derived climatological anomaly
+  products: the science, the controls, eligibility rules, and honest limits
 * [CHANGELOG.md](CHANGELOG.md)
 
 ## Tests

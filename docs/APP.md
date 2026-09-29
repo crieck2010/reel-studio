@@ -172,6 +172,16 @@ the app says so and does nothing.
 Press **Run — fetch, render, encode**. With a progress bar and live
 status messages, the pipeline:
 
+**Derived anomaly products** (optional) — with the survey-derive peer
+installed, the Run step shows a derived-products expander: product
+(`anomaly` / `standardized anomaly` / `percent of normal`), baseline
+dates (default the 1991–2020 WMO normal), baseline stride, day-of-year
+window, minimum baseline samples, and the color-limit quantile. The
+baseline is refetched with the same adapter as the analysis, the reel
+is rendered as an anomaly map with a symmetric diverging scale, and
+the baseline note is burned into the frame footer (see
+`docs/DERIVED.md`).
+
 **Render cache** (optional) — with the survey-cache peer installed,
 the Run step shows a cache expander: a per-run toggle, live usage
 (objects, tags, disk use, hit/miss counters), the cache location

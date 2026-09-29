@@ -136,8 +136,19 @@ def frame_batch_key(spec_dict: Dict[str, Any],
                     layout_canvas: Optional[Dict[str, Any]],
                     style_preset: Optional[str],
                     platform: Optional[str],
-                    viz_version: Optional[str] = None) -> str:
-    """Fingerprint every input that can change the rendered pixels."""
+                    viz_version: Optional[str] = None,
+                    derived: Optional[Dict[str, Any]] = None) -> str:
+    """Fingerprint every input that can change the rendered pixels.
+
+    ``derived`` is the normalized derived-product config (product,
+    baseline range, window, stride) when a climatological anomaly
+    product was requested, else ``None``. It is keyed explicitly even
+    though the derived settings also surface through ``spec_dict``
+    (``<base>-anomaly`` variable, symmetric limits, baseline note) and
+    the transformed field digest: the config is the scientific identity
+    of the product, and an explicit key keeps cache behavior auditable
+    if the spec mutation ever moves.
+    """
     cachex = cachex_module()
     if cachex is None:  # pragma: no cover - keys are only built when cached
         raise RuntimeError("survey-cache peer is not installed")
@@ -151,6 +162,7 @@ def frame_batch_key(spec_dict: Dict[str, Any],
         "style_preset": style_preset,
         "platform": platform or "legacy",
         "viz_version": viz_version or _dist_version("survey-viz"),
+        "derived": _digest_value(derived),
     }
     return cachex.fingerprint(payload)
 

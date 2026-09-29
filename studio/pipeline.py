@@ -201,6 +201,121 @@ _VIZ_UPGRADE = ("pip install --upgrade "
 _ANIMATE_UPGRADE = ("pip install --upgrade "
                    "git+https://github.com/crieck2010/survey-animate.git")
 
+#: Derived anomaly products (survey-derive peer, optional). Keys are the
+#: ``derived["product"]`` values accepted by :func:`run_pipeline`.
+_DERIVED_PRODUCTS = ("anomaly", "standardized", "percent")
+
+#: Human-readable labels for the derived products, used in the frame
+#: footer note and the reel provenance.
+_DERIVED_LABELS = {
+    "anomaly": "anomaly",
+    "standardized": "standardized anomaly",
+    "percent": "percent of normal",
+}
+
+#: Sources that can never carry a derived anomaly product, with the
+#: honest reason shown to the user. Every other source wires a
+#: ``refetch_baseline`` closure in its fetch branch and is eligible.
+_DERIVED_INELIGIBLE = {
+    "grace": ("GRACE/GRACE-FO water storage is already a "
+              "time-mean-removed anomaly product — an anomaly of an "
+              "anomaly is not meaningful."),
+    "firms": ("FIRMS detections are fetched daily with no stride "
+              "parameter, so a multi-decade baseline fetch is "
+              "impractical."),
+    "gebco": "GEBCO is a static compilation with no time axis.",
+    "ibtracs": "IBTrACS carries storm tracks, not a gridded scalar field.",
+    "usgs": "USGS carries streamgage records, not a gridded scalar field.",
+    "comcat": "ComCat carries earthquake events, not a gridded scalar field.",
+}
+
+
+def _normalize_derived(
+        derived: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Validate and normalize the ``derived`` pipeline argument.
+
+    Returns ``None`` when ``derived`` is ``None`` (a raw-variable
+    reel), else a dict with ``product``, ``baseline_start``,
+    ``baseline_end``, ``baseline_stride_days``, ``window_days``,
+    ``min_samples``, and ``symmetric_quantile``. Raises
+    :class:`ValueError` on any malformed input — fail fast
+    before any fetch, never mid-reel.
+    """
+    if derived is None:
+        return None
+    if not isinstance(derived, dict):
+        raise ValueError(
+            f"derived must be a dict or None, got {type(derived).__name__}")
+    unknown = (set(derived) - {"product", "baseline_start", "baseline_end",
+                               "baseline_stride_days", "window_days",
+                               "min_samples", "symmetric_quantile"})
+    if unknown:
+        raise ValueError(
+            f"unknown derived settings: {sorted(unknown)} — valid keys are "
+            "product, baseline_start, baseline_end, baseline_stride_days, "
+            "window_days, min_samples, symmetric_quantile")
+    product = derived.get("product", "anomaly")
+    if product not in _DERIVED_PRODUCTS:
+        raise ValueError(
+            f"unknown derived product {product!r} — choose from "
+            f"{list(_DERIVED_PRODUCTS)}")
+    baseline_start = str(derived.get("baseline_start", "1991-01-01"))
+    baseline_end = str(derived.get("baseline_end", "2020-12-31"))
+    try:
+        start_d = _dt.date.fromisoformat(baseline_start)
+        end_d = _dt.date.fromisoformat(baseline_end)
+    except ValueError:
+        raise ValueError(
+            "derived baseline dates must be YYYY-MM-DD, got "
+            f"{baseline_start!r}–{baseline_end!r}") from None
+    if start_d > end_d:
+        raise ValueError(
+            f"derived baseline_start ({baseline_start}) is after "
+            f"baseline_end ({baseline_end})")
+    stride = derived.get("baseline_stride_days", 30)
+    if not isinstance(stride, int) or isinstance(stride, bool) or stride < 1:
+        raise ValueError(
+            "derived baseline_stride_days must be a positive integer, "
+            f"got {stride!r}")
+    window = derived.get("window_days", 15)
+    if not isinstance(window, int) or isinstance(window, bool) or window < 0:
+        raise ValueError(
+            "derived window_days must be a non-negative integer, "
+            f"got {window!r}")
+    min_samples = derived.get("min_samples", 10)
+    if (not isinstance(min_samples, int) or isinstance(min_samples, bool)
+            or min_samples < 1):
+        raise ValueError(
+            "derived min_samples must be a positive integer, "
+            f"got {min_samples!r}")
+    quantile = derived.get("symmetric_quantile", 0.99)
+    if (isinstance(quantile, bool) or not isinstance(quantile, (int, float))
+            or not 0.0 < quantile < 1.0):
+        raise ValueError(
+            "derived symmetric_quantile must be strictly between 0 and 1, "
+            f"got {quantile!r}")
+    return {
+        "product": product,
+        "baseline_start": baseline_start,
+        "baseline_end": baseline_end,
+        "baseline_stride_days": stride,
+        "window_days": window,
+        "min_samples": min_samples,
+        "symmetric_quantile": float(quantile),
+    }
+
+
+def _baseline_label(baseline_start: str, baseline_end: str) -> str:
+    """Short human label for a baseline range: ``"1991–2020"``.
+
+    Year boundaries collapse to the WMO-style year range; any other
+    range keeps its full dates so a partial baseline is never
+    mislabeled as a full 30-year normal.
+    """
+    if baseline_start.endswith("-01-01") and baseline_end.endswith("-12-31"):
+        return f"{baseline_start[:4]}–{baseline_end[:4]}"
+    return f"{baseline_start}–{baseline_end}"
+
 
 @dataclass
 class FetchPlan:
@@ -1312,6 +1427,7 @@ def run_pipeline(
     platform: Optional[str] = None,
     style_preset: Optional[str] = None,
     cache: Any = None,
+    derived: Optional[Dict[str, Any]] = None,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1385,13 +1501,34 @@ def run_pipeline(
             reuses cached frames — and fingerprints the encode inputs
             to reuse cached MP4s — instead of re-rendering. ``None``
             (default) disables caching; see :mod:`studio.caching`.
+        derived: optional derived-product request, e.g.
+            ``{"product": "anomaly", "baseline_start": "1991-01-01",
+            "baseline_end": "2020-12-31"}``. ``product`` is one of
+            ``"anomaly"`` (field minus day-of-year climatology),
+            ``"standardized"`` (anomaly in units of climatological
+            standard deviation), or ``"percent"`` (percent of the
+            climatological normal). The baseline is fetched with the
+            same adapter, bbox, and credentials as the analysis;
+            ``baseline_stride_days`` (default 30) thins the baseline
+            fetch and ``window_days`` (default 15) sets the
+            day-of-year pooling window — see the survey-derive docs
+            for the exact method. The spec variable becomes
+            ``"<base>-anomaly"``, the color scale is shared and
+            symmetric across all frames, and the baseline is burned
+            into the frame footer. Needs the survey-derive peer and
+            survey-viz >= 0.19.0; otherwise raises
+            :class:`PeerTooOldError`. Not available for every source:
+            grace (already an anomaly), firms (no stride), gebco
+            (static), ibtracs/usgs/comcat (not gridded fields) raise
+            :class:`ValueError` naming the reason.
 
     Raises:
         UnfetchableRegionError / UnsupportedVariableError: honest,
             no-crash refusals naming what is missing.
         RuntimeError: wrapped fetch failures (network, NetCDF, ...).
         PeerTooOldError: a requested feature needs a newer peer.
-        ValueError: ``audio_path`` given but not a file.
+        ValueError: ``audio_path`` given but not a file; malformed
+            ``derived``; ``derived`` requested for an ineligible source.
     """
     def report(frac: float, message: str) -> None:
         if progress is not None:
@@ -1472,6 +1609,27 @@ def run_pipeline(
                 _ANIMATE_UPGRADE)
         render_video_kwargs["audio_path"] = audio_path
 
+    # Derived anomaly products (survey-derive peer, optional): only
+    # when actually requested, so older peers keep working untouched.
+    # survey-viz >= 0.19.0 carries the anomaly-aware footer/caption
+    # plumbing (derived_note, "<base>-anomaly" captions); older viz
+    # would render the anomaly without its baseline note, so fail
+    # fast instead of shipping a silently under-labeled anomaly.
+    derived_cfg = _normalize_derived(derived)
+    if derived_cfg is not None:
+        if getattr(peers, "derive", None) is None:
+            raise PeerTooOldError(
+                "survey-derive", "derived anomaly products",
+                getattr(peers, "derive_pip",
+                        "pip install "
+                        "git+https://github.com/crieck2010/survey-derive.git"))
+        viz_spec_fields = getattr(getattr(peers, "VizSpec", None),
+                                  "__dataclass_fields__", {})
+        if "derived_note" not in viz_spec_fields:
+            raise PeerTooOldError(
+                "survey-viz", "derived anomaly products (needs >= 0.19.0)",
+                _VIZ_UPGRADE)
+
     os.makedirs(out_dir, exist_ok=True)
     frames_dir = os.path.join(out_dir, "frames")
     os.makedirs(frames_dir, exist_ok=True)
@@ -1488,6 +1646,14 @@ def run_pipeline(
     # sets render_dict to the StormField's to_dict() form, which
     # render_viz (survey-viz >= 0.10.0) draws as track polylines.
     render_dict: Optional[Dict[str, Any]] = None
+    # Derived-product baseline refetch: each eligible source branch
+    # sets this to a (start, end) -> render-dict closure that
+    # re-fetches the baseline period with the same adapter call shape
+    # as the analysis fetch. Ineligible sources leave it None and the
+    # derived block below refuses honestly.
+    refetch_baseline: Optional[Callable[[str, str], Dict[str, Any]]] = None
+    base_stride = (derived_cfg["baseline_stride_days"]
+                   if derived_cfg is not None else stride_days)
     if source == "glsea":
         report(0.05, "Fetching GLSEA sea-surface-temperature grid…")
         fetch_bbox = _clamp_bbox(
@@ -1510,6 +1676,12 @@ def run_pipeline(
             raise RuntimeError(
                 f"Lake-average fetch failed ({type(exc).__name__}: {exc})."
             ) from exc
+        # Baseline refetch for derived products: same GLSEA adapter,
+        # same clamped bbox, thinned by the baseline stride.
+        refetch_baseline = (
+            lambda s, e: _field_to_dict(
+                peers.fetch_sst(fetch_bbox, s, e,
+                                stride_days=base_stride)))
     elif source == "era5":
         # ERA5 atmosphere: fetch the base variable plus any contour
         # overlays (e.g. msl isobars for the storm combination) in one
@@ -1541,6 +1713,12 @@ def run_pipeline(
             ) from exc
         series = None
         fetch_key = "era5"
+        # Baseline refetch for derived products: same ERA5 adapter and
+        # variable set, thinned to baseline_stride_days (hourly stride).
+        refetch_baseline = (
+            lambda s, e: _field_to_dict(
+                fetch_fn(variables, tuple(spec.bbox), s, e,
+                         stride_hours=24 * base_stride)))
     elif source in ("oscar", "cmems-currents"):
         # Global currents: fetch(bbox, start, end, stride_days=...) on the
         # spec bbox directly — the 0.25°/1/12° grids are global, nothing
@@ -1570,6 +1748,12 @@ def run_pipeline(
             ) from exc
         series = None
         fetch_key = source
+        # Baseline refetch for derived products: same currents adapter,
+        # thinned by the baseline stride.
+        refetch_baseline = (
+            lambda s, e: _field_to_dict(
+                fetch_fn(tuple(spec.bbox), s, e,
+                         stride_days=base_stride)))
     elif source == "firms":
         # NASA FIRMS active fires: fetch_detections(bbox, start, end) on
         # the spec bbox directly — the area API is global, nothing to
@@ -1627,6 +1811,12 @@ def run_pipeline(
             ) from exc
         series = None
         fetch_key = "nsidc"
+        # Baseline refetch for derived products: same NSIDC adapter,
+        # thinned by the baseline stride.
+        refetch_baseline = (
+            lambda s, e: _field_to_dict(
+                fetch_fn(tuple(spec.bbox), s, e,
+                         stride_days=base_stride)))
     elif source == "imerg":
         # NASA GPM IMERG V07 half-hourly precipitation:
         # fetch_imerg(bbox, start, end, accumulate="daily", run="late",
@@ -1659,6 +1849,13 @@ def run_pipeline(
             ) from exc
         series = None
         fetch_key = "imerg"
+        # Baseline refetch for derived products: same IMERG adapter and
+        # accumulation, thinned by the baseline stride.
+        refetch_baseline = (
+            lambda s, e: _field_to_dict(
+                fetch_fn(tuple(spec.bbox), s, e,
+                         accumulate="daily", run="late",
+                         stride_days=base_stride)))
     elif source == "blackmarble":
         # NASA Black Marble VNP46A2 daily night lights:
         # fetch_blackmarble(bbox, start, end, product="daily",
@@ -1690,6 +1887,12 @@ def run_pipeline(
             ) from exc
         series = None
         fetch_key = "blackmarble"
+        # Baseline refetch for derived products: same Black Marble
+        # adapter, thinned by the baseline stride.
+        refetch_baseline = (
+            lambda s, e: _field_to_dict(
+                fetch_fn(tuple(spec.bbox), s, e,
+                         product="daily", stride_days=base_stride)))
     elif source == "gebco":
         # GEBCO 2024 global topography/bathymetry: fetch_gebco(bbox,
         # resolution=...) on the spec bbox directly — the grid is
@@ -1942,6 +2145,19 @@ def run_pipeline(
                 peers, context, spec, stride_days)
         series = None
         fetch_key = "oceancolor"
+        # Baseline refetch for derived products: same CoastWatch
+        # adapter, cadence, and sensor, with times normalized to date
+        # strings exactly like the analysis path.
+        def _refetch_oceancolor(s: str, e: str) -> Dict[str, Any]:
+            base = fetch_fn(
+                tuple(spec.bbox), s, e, cadence=oc_cadence,
+                sensor=getattr(spec, "sensor", None) or "modis-aqua")
+            d = base.to_dict() if hasattr(base, "to_dict") else base
+            d = dict(d)
+            d["times"] = [_time_to_date_str(t)
+                          for t in d.get("times", [])]
+            return d
+        refetch_baseline = _refetch_oceancolor
     elif source == "comcat":
         # USGS ComCat earthquake catalog (survey-viz >= 0.14.0,
         # survey-currents >= 0.15.0): fetch_earthquakes(bbox, start,
@@ -2004,6 +2220,12 @@ def run_pipeline(
                 "credentials are configured."
             ) from exc
         series = None
+        # Baseline refetch for derived products: same global-SST
+        # adapter, thinned by the baseline stride.
+        refetch_baseline = (
+            lambda s, e: _field_to_dict(
+                fetch_fn(tuple(spec.bbox), s, e,
+                         stride_days=base_stride)))
 
     # -- 2. render frames ----------------------------------------------------
     # render_viz is duck-typed: the field is adapted to its documented dict
@@ -2014,6 +2236,119 @@ def run_pipeline(
     render_field = (render_dict if render_dict is not None
                     else _field_to_dict(field))
     series_dict = _series_to_dict(series)
+    # -- derived products (survey-derive peer, optional) ----------------------
+    # A climatological anomaly product replaces the raw field with
+    # field-minus-climatology (or the standardized / percent-of-normal
+    # sibling) computed against a day-of-year baseline fetched with
+    # the same adapter as the analysis. The spec variable becomes
+    # "<base>-anomaly" so survey-viz >= 0.19.0 renders it
+    # anomaly-aware (base-variable colormap, field-carried units,
+    # baseline note burned into the footer), and the transformed field
+    # feeds the cache key — a cached raw-variable batch can never
+    # masquerade as an anomaly.
+    derived_report: Optional[Dict[str, Any]] = None
+    if derived_cfg is not None:
+        reason = _DERIVED_INELIGIBLE.get(source)
+        if reason is not None:
+            raise ValueError(
+                "Derived anomaly products are not available for source "
+                f"{source!r}: {reason}")
+        if refetch_baseline is None:  # pragma: no cover - defensive
+            raise ValueError(
+                "Derived anomaly products are not available for source "
+                f"{source!r}: no baseline refetch is wired for it.")
+        base_variable = str(getattr(spec, "variable", ""))
+        report(0.44,
+               f"Fetching {derived_cfg['baseline_start']}–"
+               f"{derived_cfg['baseline_end']} climatology baseline…")
+        try:
+            baseline_field = refetch_baseline(
+                derived_cfg["baseline_start"], derived_cfg["baseline_end"])
+        except Exception as exc:
+            raise RuntimeError(
+                f"Climatology baseline fetch failed "
+                f"({type(exc).__name__}: {exc}). The baseline uses the same "
+                f"adapter and credentials as the analysis fetch — check the "
+                f"network, credentials, and that the source archive covers "
+                f"{derived_cfg['baseline_start']}–"
+                f"{derived_cfg['baseline_end']}."
+            ) from exc
+        report(0.47, "Computing derived anomaly product…")
+        derive = getattr(peers, "derive", None)
+        # The derive engine coerces the dict; give it the real variable
+        # name so its provenance (and the "<base>-anomaly" product
+        # variable) says "sst", not "unknown".
+        render_field = dict(render_field)
+        render_field.setdefault("variable", base_variable)
+        climatology = derive.climatology(
+            baseline_field, window_days=derived_cfg["window_days"],
+            min_samples=derived_cfg["min_samples"])
+        product_fn = {
+            "anomaly": derive.anomaly,
+            "standardized": derive.standardized_anomaly,
+            "percent": derive.percent_of_normal,
+        }[derived_cfg["product"]]
+        render_field = product_fn(render_field, climatology)
+        if derived_cfg["product"] == "percent":
+            # Percent-of-normal is a ratio centered at 100%, not a signed
+            # anomaly around zero — a symmetric scale on the raw ratio
+            # would saturate the whole map. Render the percentage-point
+            # deviation from 100% so the shared symmetric scale is
+            # meaningful (0 = normal, +20 = 120% of normal).
+            render_field["values"] = (
+                np.asarray(render_field["values"], dtype=float) - 100.0)
+        lo, hi = derive.suggest_symmetric_limits(
+            render_field["values"],
+            quantile=derived_cfg["symmetric_quantile"])
+        spec.variable = f"{base_variable}-anomaly"
+        spec.vmin = lo
+        spec.vmax = hi
+        derived_note = (
+            f"{_DERIVED_LABELS[derived_cfg['product']]} vs "
+            f"{_baseline_label(derived_cfg['baseline_start'], derived_cfg['baseline_end'])} "
+            f"climatology")
+        if derived_cfg["product"] == "percent":
+            # The map shows deviation from 100% (see above) — say so in
+            # the footer, or a viewer will read the scale as the ratio.
+            derived_note = (
+                f"{_DERIVED_LABELS[derived_cfg['product']]} "
+                f"(deviation from 100%) vs "
+                f"{_baseline_label(derived_cfg['baseline_start'], derived_cfg['baseline_end'])} "
+                f"climatology")
+        spec.derived_note = derived_note
+        if "cmap" not in render_viz_kwargs:
+            # Diverging map for signed anomalies; an explicit cmap=
+            # (API call or Aesthetics step) always wins.
+            render_viz_kwargs["cmap"] = "RdBu_r"
+        if series_dict is not None:
+            # The GLSEA lake-average series is raw temperatures — keep
+            # the chart panel consistent with the anomaly map by
+            # replacing it with the per-frame spatial-mean anomaly.
+            frame_means = []
+            for frame in np.asarray(render_field["values"], dtype=float):
+                if np.isfinite(frame).any():
+                    frame_means.append(float(np.nanmean(frame)))
+                else:
+                    frame_means.append(float("nan"))
+            series_dict = {
+                "dates": list(render_field.get("times", [])),
+                "values": frame_means,
+            }
+        derived_report = {
+            "product": derived_cfg["product"],
+            "product_label": _DERIVED_LABELS[derived_cfg["product"]],
+            "variable": spec.variable,
+            "baseline_start": derived_cfg["baseline_start"],
+            "baseline_end": derived_cfg["baseline_end"],
+            "window_days": derived_cfg["window_days"],
+            "min_samples": derived_cfg["min_samples"],
+            "symmetric_quantile": derived_cfg["symmetric_quantile"],
+            "baseline_stride_days": derived_cfg["baseline_stride_days"],
+            "vmin": lo,
+            "vmax": hi,
+            "note": derived_note,
+            "engine": "survey-derive",
+        }
     # -- render cache (survey-cache peer, optional) ---------------------------
     # The frame batch is keyed by a fingerprint of everything that can
     # change the pixels: the spec, digests of the fetched arrays, the
@@ -2032,7 +2367,7 @@ def run_pipeline(
                      else dict(spec))
         batch_key = caching.frame_batch_key(
             spec_dict, render_field, series_dict, render_viz_kwargs,
-            layout_canvas, style_preset, platform)
+            layout_canvas, style_preset, platform, derived=derived_cfg)
         cache_report["batch_tag"] = caching.frames_tag(batch_key)
         cached_batch = caching.restore_frame_batch(
             cache, batch_key, frames_dir)
@@ -2152,6 +2487,7 @@ def run_pipeline(
             "audio_path": (os.path.abspath(audio_path)
                            if audio_path is not None else None),
         },
+        "derived": derived_report,
         "cache": cache_report,
     }
 

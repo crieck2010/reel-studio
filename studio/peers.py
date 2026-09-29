@@ -1,6 +1,6 @@
 """Optional peer imports with graceful degradation.
 
-The seven peers are separate packages, installed from their own GitHub
+The eight peers are separate packages, installed from their own GitHub
 repos. Nothing in reel-studio hard-imports them: :func:`load_peers`
 tries each one and records what is missing, :func:`require_peer` raises
 a :class:`MissingPeerError` whose message names the exact
@@ -8,11 +8,13 @@ a :class:`MissingPeerError` whose message names the exact
 :func:`wire_peers` builds the callables namespace that
 :mod:`studio.pipeline` runs against. survey-layout is the optional
 fourth peer, survey-style the optional fifth, survey-schedule the
-optional sixth, and survey-cache the optional seventh: none is ever
+optional sixth, survey-cache the optional seventh, and survey-derive
+the optional eighth: none is ever
 *required* (the legacy 1080×1920 layout always works, the manual
 aesthetics controls always work, one-off plus batch generation always
-work, and rendering without a cache always works), and the UI offers
-their features only when they are installed.
+work, rendering without a cache always works, and raw-variable reels
+always work), and the UI offers their features only when they are
+installed.
 """
 
 from __future__ import annotations
@@ -66,6 +68,14 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
         "needed_for": "smarter render caching (cachex.Cache: "
                       "content-addressed frame-batch and MP4 reuse, "
                       "keyed by fingerprints of the render inputs)",
+    },
+    "survey-derive": {
+        "module": "derive",
+        "pip": "pip install git+https://github.com/crieck2010/survey-derive.git",
+        "needed_for": "derived products (derive.climatology / anomaly / "
+                      "standardized_anomaly / percent_of_normal: "
+                      "climatological anomaly maps vs a day-of-year "
+                      "baseline, computed deterministically with NumPy)",
     },
 }
 
@@ -212,6 +222,14 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         earthquakes = importlib.import_module("currents.earthquakes")
     except ImportError:
         earthquakes = None
+    # survey-derive is the optional eighth peer (climatological anomaly
+    # products): None when it is missing, and the pipeline raises
+    # PeerTooOldError with the install command only when a derived
+    # product is actually requested.
+    try:
+        derive = importlib.import_module("derive")
+    except ImportError:
+        derive = None
 
     return types.SimpleNamespace(
         parse_description=viz.parse_description,
@@ -260,4 +278,9 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         get_platform=(layout.get_platform if layout else None),
         list_platforms=(layout.list_platforms if layout else None),
         layout_pip=PEER_SPECS["survey-layout"]["pip"],
+        # survey-derive is optional (see above): the module is None
+        # when it is missing, and the pipeline raises PeerTooOldError
+        # with the install command only on actual use.
+        derive=derive,
+        derive_pip=PEER_SPECS["survey-derive"]["pip"],
     )

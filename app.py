@@ -38,7 +38,7 @@ except ImportError:  # headless / tests: import still works, main() won't run
 from studio import batch, caching, llm_assist, peers, pipeline, scheduler, styling
 
 APP_TITLE = "reel-studio"
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.9.0"
 PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate",
               "survey-layout", "survey-style", "survey-schedule")
 
@@ -109,6 +109,7 @@ def _current_run_settings() -> Dict[str, Any]:
         "cmap": st.session_state.get("cmap"),
         "platform": st.session_state.get("platform") or "legacy",
         "style_preset": st.session_state.get("style_preset"),
+        "derived": _run_derived(),
     }
 
 
@@ -916,7 +917,12 @@ def _schedule_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     st.caption(
         "Snapshot with this job: motion, audio, story captions, colormap, "
         f"platform (`{settings.get('platform')}`), style preset "
-        f"(`{settings.get('style_preset')}`). Strides stay default — "
+        f"(`{settings.get('style_preset')}`)"
+        + (f", derived product (`{settings['derived']['product']}` vs "
+           f"{settings['derived']['baseline_start']}–"
+           f"{settings['derived']['baseline_end']})"
+           if settings.get("derived") else "")
+        + ". Strides stay default — "
         "hand-edit the job JSON for `stride_days` / `stride_hours`.")
 
     if st.button("Create scheduled job", type="secondary",
@@ -1035,6 +1041,100 @@ def _open_run_cache(statuses: Dict[str, peers.PeerStatus]) -> Any:
     return caching.open_cache()
 
 
+def _run_derived() -> Optional[Dict[str, Any]]:
+    """The derived-product config for this run, or None when disabled.
+
+    Read from the Run-step expander widgets; defaults match
+    :func:`studio.pipeline._normalize_derived` so an untouched expander
+    still validates.
+    """
+    if not st.session_state.get("derived_enabled"):
+        return None
+    return {
+        "product": st.session_state.get("derived_product", "anomaly"),
+        "baseline_start": (
+            st.session_state.get("derived_baseline_start")
+            or "1991-01-01").strip(),
+        "baseline_end": (
+            st.session_state.get("derived_baseline_end")
+            or "2020-12-31").strip(),
+        "baseline_stride_days": int(st.session_state.get("derived_stride", 30)),
+        "window_days": int(st.session_state.get("derived_window", 15)),
+        "min_samples": int(st.session_state.get("derived_min_samples", 10)),
+        "symmetric_quantile": float(
+            st.session_state.get("derived_quantile", 0.99)),
+    }
+
+
+def _derived_section(statuses: Dict[str, peers.PeerStatus]) -> None:
+    """'Derived product' — inside the Run step, before the button.
+
+    The survey-derive peer (optional eighth engine) computes
+    climatological anomaly products: each frame minus its day-of-year
+    climatology over a user-chosen baseline period. Needs survey-viz >=
+    0.19.0 at render time; the pipeline says so plainly otherwise.
+    """
+    derive_status = statuses.get("survey-derive")
+    with st.expander("Derived product: climatological anomaly (optional)",
+                     expanded=False):
+        if derive_status is None or not derive_status.installed:
+            st.info("Render anomaly maps instead of the raw variable with "
+                    "the derive engine:\n\n"
+                    f"`{derive_status.pip_command if derive_status else 'pip install git+https://github.com/crieck2010/survey-derive.git'}`\n\n"
+                    "Without it, reels show the raw variable — nothing else "
+                    "changes.")
+            return
+        st.checkbox("Render anomaly instead of the raw variable",
+                    key="derived_enabled",
+                    help="The analysis field is replaced by its departure "
+                         "from the day-of-year climatology over the baseline "
+                         "period below.")
+        if not st.session_state.get("derived_enabled"):
+            return
+        st.selectbox("Product",
+                     ["anomaly", "standardized", "percent"],
+                     key="derived_product",
+                     help="anomaly: field minus climatology (native units); "
+                          "standardized: anomaly in standard deviations; "
+                          "percent: field as % of the climatology mean.")
+        col1, col2 = st.columns(2)
+        col1.text_input("Baseline start (YYYY-MM-DD)",
+                        value="1991-01-01", key="derived_baseline_start")
+        col2.text_input("Baseline end (YYYY-MM-DD)",
+                        value="2020-12-31", key="derived_baseline_end")
+        col3, col4 = st.columns(2)
+        col3.number_input("Baseline stride (days)", min_value=1,
+                          value=30, step=1, key="derived_stride",
+                          help="Sample one baseline frame every N days "
+                               "(30 ≈ monthly).")
+        col4.number_input("Day-of-year window (days)", min_value=0,
+                          value=15, step=1, key="derived_window",
+                          help="The climatology for each calendar day is "
+                               "built from ±N days around it (0 = exact "
+                               "day-of-year matches only).")
+        col5, col6 = st.columns(2)
+        col5.number_input("Minimum samples per day-of-year", min_value=1,
+                          value=10, step=1, key="derived_min_samples",
+                          help="Floor on pooled baseline samples per "
+                               "day-of-year and grid cell. Day/cells below "
+                               "it are masked out of standardized "
+                               "anomalies.")
+        col6.number_input("Color-limit quantile", min_value=0.5,
+                          max_value=0.999, value=0.99, step=0.01,
+                          format="%.2f", key="derived_quantile",
+                          help="The shared symmetric color range covers up "
+                               "to this quantile of |anomaly| — lower it "
+                               "to saturate the extremes sooner.")
+        st.caption("Available for SST, ERA5 atmosphere, currents, sea ice, "
+                   "precipitation, night lights and ocean color. Not for "
+                   "GRACE (already an anomaly), fires, static topography, "
+                   "storm tracks, streamgages or earthquakes — the pipeline "
+                   "refuses those instead of guessing. The baseline is "
+                   "re-fetched with the same source, so its archive must "
+                   "actually cover the period you pick. Needs survey-viz ≥ "
+                   "0.19.0 at render time.")
+
+
 def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     st.subheader("7 · Run the pipeline")
     spec_dict: Optional[Dict[str, Any]] = st.session_state.get("spec_dict")
@@ -1043,6 +1143,7 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
         return
 
     _refine_section(statuses)
+    _derived_section(statuses)
     _cache_section(statuses)
 
     if not st.button("Run — fetch, render, encode", type="primary"):
@@ -1074,7 +1175,8 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
             audio_path=st.session_state.get("audio_path"),
             story_captions=bool(st.session_state.get("story_captions")),
             platform=st.session_state.get("platform") or "legacy",
-            style_preset=st.session_state.get("style_preset"))
+            style_preset=st.session_state.get("style_preset"),
+            derived=_run_derived())
     except (pipeline.UnfetchableRegionError,
             pipeline.UnsupportedVariableError) as exc:
         progress_bar.empty()
@@ -1215,6 +1317,12 @@ def _show_result() -> None:
     style_preset = result.get("style_preset")
     st.caption(f"Style: **{style_preset}** (preset)"
                if style_preset else "Style: hand-tuned")
+    derived_info = ((result.get("provenance") or {}).get("derived") or {})
+    if derived_info:
+        st.caption(f"Derived product: **{derived_info.get('product')}** vs "
+                   f"{derived_info.get('baseline_start')}–"
+                   f"{derived_info.get('baseline_end')} climatology "
+                   f"(engine: {derived_info.get('engine')})")
     captions = _caption_events(result.get("manifest_path"))
     if captions:
         with st.expander(f"Story captions ({len(captions)})"):

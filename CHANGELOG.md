@@ -2,6 +2,44 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.9.0] - 2026-09-28
+
+### Added
+- **Derived climatological anomaly products** (new survey-derive peer,
+  optional eighth engine): the Run step gains a *Derived product*
+  expander — render the anomaly instead of the raw variable. Three
+  products (`anomaly`, `standardized`, `percent of normal`), all vs a
+  day-of-year climatology over a user-chosen baseline period (default
+  1991–2020): baseline start/end dates, baseline sampling stride,
+  climatology day-window, minimum baseline samples per day-of-year,
+  and the color-limit quantile are all user-controlled, before
+  generation and carried into batch queues and scheduled jobs. The baseline is
+  re-fetched with the same source adapter as the analysis (same grid,
+  same variable semantics); the renderer applies one shared symmetric
+  color scale to every frame and defaults to the `RdBu_r` diverging
+  colormap unless the user picked one. survey-viz ≥ 0.19.0 renders
+  `<variable>-anomaly` specs, burns the baseline note into the frame
+  footer, and records it in the manifest. The Great Lakes SST chart is
+  replaced by per-frame spatial-mean anomalies so chart and map agree.
+  `run_pipeline(..., derived={...})` for programmatic runs; the render
+  cache fingerprints the normalized derived config so a changed baseline
+  can never serve stale frames. See [docs/DERIVED.md](docs/DERIVED.md)
+  for the methods reference.
+- Sources that cannot honestly produce an anomaly **refuse** instead of
+  rendering a misleading map: GRACE (already an anomaly), FIRMS (no
+  baseline stride on its adapter), GEBCO (static), storm tracks,
+  streamgages, and earthquakes. Missing survey-derive shows the install
+  command; survey-viz < 0.19.0 gets a named `PeerTooOldError` instead of
+  an unlabeled anomaly.
+
+### Changed
+- `studio/caching.py`: `frame_batch_key()` takes an optional `derived`
+  config and folds it into the frame-batch fingerprint.
+- Engine status panel now tracks eight peers (survey-derive added).
+
+### Fixed
+- None.
+
 ## [0.8.0] - 2026-09-28
 
 ### Added

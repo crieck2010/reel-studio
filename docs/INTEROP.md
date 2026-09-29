@@ -1,9 +1,10 @@
 # reel-studio interop: peer contracts
 
-reel-studio integrates seven peer engines. All contracts below were
+reel-studio integrates eight peer engines. All contracts below were
 verified against the peers' **actual code** (survey-currents v0.15.0,
-survey-viz v0.18.0, survey-animate v0.2.0, survey-layout v0.1.0,
-survey-style v0.1.0, survey-schedule v0.1.0, survey-cache v0.1.0), not
+survey-viz v0.19.0, survey-animate v0.2.0, survey-layout v0.1.0,
+survey-style v0.1.0, survey-schedule v0.1.0, survey-cache v0.1.0,
+survey-derive v0.1.0), not
 guesses. reel-studio never
 hard-imports peers and never imports peer internals beyond the entry
 points listed here.
@@ -512,3 +513,38 @@ four lakes' bboxes already fit the grid.
   (`execute_reel_job` opens the cache unless `REEL_STUDIO_CACHE=0`)
   share the same cache. Default home `~/.reel-studio/cache`
   (`REEL_STUDIO_CACHE_DIR` overrides).
+
+## Derived-products contract (survey-derive v0.1.0 / survey-viz v0.19.0)
+
+* reel-studio consumes the `derive` module (import name) through five
+  functions, verified against the released survey-derive v0.1.0 source:
+  `climatology(field, window_days, min_samples)` groups baseline frames
+  into 366 day-of-year bins with year-boundary wrapping and returns
+  per-bin mean/std/count plus `baseline_start`/`baseline_end`;
+  `anomaly` / `standardized_anomaly` / `percent_of_normal` take
+  `(field, climatology)` dicts with `times`/`lats`/`lons`/`values` and
+  return the transformed dict; `suggest_symmetric_limits(values,
+  quantile=0.99)` returns a `(lo, hi)` symmetric tuple. All are
+  NaN-aware; `climatology` raises on grid mismatch between baseline and
+  analysis, which reel-studio propagates as a pipeline failure.
+* The pipeline re-fetches the baseline with the same source-adapter
+  closure that fetched the analysis (GLSEA, ERA5, OSCAR/CMEMS currents,
+  NSIDC, IMERG, Black Marble, ocean color, OISST/MUR). Adapter
+  signatures differ per source (GLSEA takes a lake name, ERA5 takes
+  stride hours, ocean color reuses the analysis cadence) — each closure
+  preserves the analysis call's grid and cadence so the derive engine's
+  exact-grid requirement holds.
+* The analysis `VizSpec` is mutated (not copied): `variable` becomes
+  `<base>-anomaly`, `vmin`/`vmax` become the shared symmetric limits,
+  `derived_note` becomes e.g. `"anomaly vs 1991–2020 climatology"`. The
+  spec object is created fresh per `run_pipeline` call, so batch jobs
+  never share mutated specs.
+* survey-viz >= 0.19.0 is required at render time: it renders
+  `<variable>-anomaly` specs, looks up the colormap by the base
+  variable, burns `derived_note` into the frame footer, and records it
+  in the manifest. Older survey-viz gets `PeerTooOldError` naming the
+  `v0.19.0` floor; missing survey-derive gets the same error naming the
+  derive install. Raw-variable reels need neither.
+* The render cache folds the normalized derived config into
+  `frame_batch_key`, so a baseline change is a different key by
+  construction.
