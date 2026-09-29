@@ -1430,6 +1430,7 @@ def run_pipeline(
     cache: Any = None,
     derived: Optional[Dict[str, Any]] = None,
     title_card: bool = True,
+    min_duration_s: float = 0.0,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1532,6 +1533,14 @@ def run_pipeline(
             Set False for cover-page-free reels (e.g. the daily
             scheduled reels, where 60 title frames can dwarf a handful
             of data frames).
+        min_duration_s: minimum *data* duration in seconds, passed to
+            survey-animate >= 0.3.0's ``render_video`` (each data frame
+            repeats ``k = ceil(ceil(min_duration_s * fps) / n)`` times;
+            applied after blending, before the title card). ``0``
+            (default) disables the hold. Only forwarded when > 0, so
+            older peers keep working; needs survey-animate >= 0.3.0
+            otherwise raises :class:`PeerTooOldError`. Fingerprinted
+            into the encode-cache key via ``render_video_kwargs``.
 
     Raises:
         UnfetchableRegionError / UnsupportedVariableError: honest,
@@ -1619,6 +1628,16 @@ def run_pipeline(
                 "survey-animate", "audio muxing (needs >= 0.2.0)",
                 _ANIMATE_UPGRADE)
         render_video_kwargs["audio_path"] = audio_path
+    if min_duration_s:
+        if min_duration_s < 0:
+            raise ValueError(
+                f"min_duration_s must be >= 0, got {min_duration_s!r}")
+        if not _supports_kw(peers.render_video, "min_duration_s"):
+            raise PeerTooOldError(
+                "survey-animate",
+                "minimum data duration (needs >= 0.3.0)",
+                _ANIMATE_UPGRADE)
+        render_video_kwargs["min_duration_s"] = min_duration_s
 
     # Derived anomaly products (survey-derive peer, optional): only
     # when actually requested, so older peers keep working untouched.

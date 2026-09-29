@@ -409,3 +409,111 @@ def test_legacy_render_viz_signature_still_works(tmp_path):
     fake_peers, _, _ = make_fake_peers(calls)
     result = pipeline.run_pipeline(FakeSpec(), fake_peers, str(tmp_path))
     assert result.n_frames == 2
+
+
+def _peers_capturing_video_kwargs(calls):
+    """Fake peers recording the full kwargs dict of render_video."""
+    seen_kwargs = []
+
+    def _guard(name):
+        def deco(fn):
+            def wrapper(*a, **k):
+                calls.append(name)
+                return fn(*a, **k)
+            return wrapper
+        return deco
+
+    @_guard("is_fetchable")
+    def is_fetchable(key):
+        return True
+
+    @_guard("fetch_sst")
+    def fetch_sst(bbox, start, end, stride_days=30):
+        return FakeField()
+
+    @_guard("fetch_averages")
+    def fetch_averages(lake, start, end):
+        return FakeSeries()
+
+    @_guard("render_viz")
+    def render_viz(spec, field, series, out_dir):
+        os.makedirs(out_dir, exist_ok=True)
+        p = os.path.join(out_dir, "frame_0001.png")
+        with open(p, "wb") as fh:
+            fh.write(b"\x89PNG\r\n\x1a\n")
+        manifest = os.path.join(out_dir, "manifest.json")
+        with open(manifest, "w") as fh:
+            fh.write("{}")
+        return [p], manifest
+
+    @_guard("render_video")
+    def render_video(source, out_path, preset="reel", **kwargs):
+        seen_kwargs.append(dict(kwargs))
+        with open(out_path, "wb") as fh:
+            fh.write(b"FAKEMP4")
+        return types.SimpleNamespace(video_path=out_path,
+                                     sidecar_path=out_path + ".provenance.json",
+                                     fps=30.0, n_frames=1,
+                                     width=1080, height=1920)
+
+    peers = types.SimpleNamespace(
+        is_fetchable=is_fetchable,
+        fetch_sst=fetch_sst,
+        fetch_averages=fetch_averages,
+        render_viz=render_viz,
+        render_video=render_video,
+        glsea_bounds=(-92.4199507342304, 38.8749871947297,
+                      -75.8816402880531, 50.6059751976539),
+    )
+    return peers, seen_kwargs
+
+
+def test_min_duration_s_forwarded_to_render_video(tmp_path):
+    """min_duration_s=10.0 reaches render_video kwargs."""
+    calls = []
+    peers, seen_kwargs = _peers_capturing_video_kwargs(calls)
+    pipeline.run_pipeline(FakeSpec(), peers, str(tmp_path),
+                          min_duration_s=10.0)
+    assert seen_kwargs[0]["min_duration_s"] == 10.0
+
+
+def test_min_duration_s_zero_not_forwarded(tmp_path):
+    """Default 0 is never passed, so older survey-animate peers keep
+    working (same convention as motion/audio_path)."""
+    calls = []
+    peers, seen_kwargs = _peers_capturing_video_kwargs(calls)
+    pipeline.run_pipeline(FakeSpec(), peers, str(tmp_path))
+    assert "min_duration_s" not in seen_kwargs[0]
+
+
+def test_min_duration_s_changes_cache_key(tmp_path, monkeypatch):
+    """Cache correctness: the video key must differ when min_duration_s
+    is set, because render_video_kwargs is fingerprinted into it."""
+    from studio import caching
+    calls = []
+    peers, _ = _peers_capturing_video_kwargs(calls)
+    seen = []
+
+    def fake_video_key(frame_keys, preset, title, kwargs, **kw):
+        seen.append(dict(kwargs))
+        return "k"
+
+    monkeypatch.setattr(caching, "video_key", fake_video_key)
+    monkeypatch.setattr(caching, "video_tag", lambda k: "tag")
+    monkeypatch.setattr(caching, "restore_video",
+                        lambda cache, key, path: None)
+    monkeypatch.setattr(caching, "store_video", lambda *a, **k: None)
+    monkeypatch.setattr(caching, "frame_batch_key", lambda *a, **k: "fb")
+    monkeypatch.setattr(caching, "frames_tag", lambda k: "ftag")
+    monkeypatch.setattr(caching, "restore_frame_batch",
+                        lambda cache, key, d: None)
+    monkeypatch.setattr(caching, "store_frame_batch",
+                        lambda cache, key, frames, manifest: {
+                            "frames": ["c" * 64 for _ in frames]})
+    pipeline.run_pipeline(FakeSpec(), peers, str(tmp_path),
+                          cache=object())
+    pipeline.run_pipeline(FakeSpec(), peers, str(tmp_path / "b"),
+                          cache=object(), min_duration_s=10.0)
+    assert "min_duration_s" not in seen[0]
+    assert seen[1]["min_duration_s"] == 10.0
+    assert seen[0] != seen[1]

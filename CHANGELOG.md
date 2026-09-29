@@ -2,6 +2,19 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.13.0] - 2026-09-29
+
+### Added
+- Minimum data duration passthrough: `run_pipeline(...,
+  min_duration_s=10.0)` forwards into survey-animate >= 0.3.0's
+  `render_video` (each data frame repeats
+  `k = ceil(ceil(min_duration_s * fps) / n)` times; applied after
+  blending, before the title card). Only forwarded when > 0, so older
+  peers keep working (PeerTooOldError otherwise); fingerprinted into
+  the encode-cache key via `render_video_kwargs`. Pairs with
+  `motion={"blending": True, "smooth_steps": N}` for graceful
+  fade-in of new data points on short reels.
+
 ## [0.12.0] - 2026-09-29
 
 ### Added
