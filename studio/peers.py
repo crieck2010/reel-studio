@@ -83,7 +83,12 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
         "needed_for": "social-media publishing for the Publish step "
                       "(publish.registry: YouTube / Instagram / Facebook / "
                       "TikTok adapters with terminal-based OAuth connect, "
-                      "publish.models.PublishRequest / PublishResult)",
+                      "publish.models.PublishRequest / PublishResult), plus "
+                      "the survey-publish >= 0.2.0 queue engine for "
+                      "scheduled publishing (publish.QueuedItem / "
+                      "QueueStore / parse_schedule_time / DEFAULT_SLOTS, "
+                      "fired by `survey-publish tick` on a 15-minute "
+                      "schedule)",
     },
 }
 

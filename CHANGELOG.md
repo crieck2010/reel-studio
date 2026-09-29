@@ -2,6 +2,50 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.11.0] - 2026-09-28
+
+### Added
+- **Publish step: schedule for later** (survey-publish ≥ 0.2.0 queue
+  engine). The Publish step gains a per-reel **Publish mode** radio —
+  *Publish now* keeps the v0.10.0 approve-and-post behavior unchanged,
+  and *Schedule for later* queues the reel instead of posting it: three
+  preset slots from the engine's `DEFAULT_SLOTS` (**Morning 08:30**,
+  **Midday 12:30**, **Evening 18:30**, local time — a slot that already
+  passed today rolls to tomorrow) plus a custom date + time
+  (`st.date_input` defaulting to today + `HH:MM` text field), all
+  resolved through the engine's `parse_schedule_time`. The resolved
+  local time is shown back before enqueueing, the platform multiselect
+  defaults to the connected platforms, and **Queue for scheduled
+  publish** enqueues via `QueueStore`, shows the item id + scheduled
+  time, and records it in the run manifest under a new
+  `"queued_publication"` section
+  (`studio.pipeline.record_queued_publication()`).
+- A **Publish queue** expander in the same step: queued/publishing
+  items (title, scheduled local time, platforms, status) with per-item
+  **Cancel** and **Reschedule** (new-time input) controls for queued
+  items, plus a **History** view of published/failed/canceled items.
+  Failed items show `last_error` and a **Requeue failed platforms**
+  button that re-enqueues **only** the platforms missing from
+  `published_urls` — successes are never double-posted
+  (partial-failure rule).
+- An onboarding hint (`st.info`) in the step: scheduled publishes only
+  fire while the PC is on and awake with the 15-minute tick job
+  running, with a link to the Task Scheduler setup in
+  `survey-publish`'s `docs/SCHEDULING.md`. Unconnected platforms are
+  skipped with a warning when queueing, mirroring the publish-now rule
+  that nothing ever posts to an unconnected platform.
+- survey-publish peer note (`studio/peers.py`) now names the ≥ 0.2.0
+  queue engine (`publish.QueuedItem` / `QueueStore` /
+  `parse_schedule_time` / `DEFAULT_SLOTS`, fired by
+  `survey-publish tick`); [docs/PUBLISHING.md](docs/PUBLISHING.md)
+  gains a *Scheduling for later* section.
+
+### Limitations
+- Queue times are the PC's local time and the queue only fires while
+  the PC is on/awake with the tick job running — scheduled reels are
+  not a fire-and-forget cloud service (this is the honest
+  self-hosted model; see the scheduling docs).
+
 ## [0.10.0] - 2026-09-28
 
 ### Added

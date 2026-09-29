@@ -40,7 +40,7 @@ except ImportError:  # headless / tests: import still works, main() won't run
 from studio import batch, caching, llm_assist, peers, pipeline, scheduler, styling
 
 APP_TITLE = "reel-studio"
-APP_VERSION = "0.10.0"
+APP_VERSION = "0.11.0"
 PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate",
               "survey-layout", "survey-style", "survey-schedule",
               "survey-publish")
@@ -1531,16 +1531,290 @@ def _publication_record(title: str, caption: str, hashtags: list,
     }
 
 
+# --- schedule-for-later (survey-publish >= 0.2.0 queue engine) ---------------
+
+#: Human labels paired positionally with DEFAULT_SLOTS.
+_SCHEDULE_SLOT_LABELS = ("Morning", "Midday", "Evening")
+
+
+def _publish_queue_peer():
+    """Import the survey-publish queue engine.
+
+    Returns a namespace with ``QueuedItem``, ``QueueStore``,
+    ``parse_schedule_time`` and ``DEFAULT_SLOTS`` — or ``None`` when
+    survey-publish is missing or older than the 0.2.0 queue engine, so
+    the step can show the upgrade hint instead of crashing.
+    """
+    try:
+        from publish import (DEFAULT_SLOTS, QueuedItem, QueueStore,
+                             parse_schedule_time)
+    except ImportError:
+        return None
+    return types.SimpleNamespace(
+        QueuedItem=QueuedItem, QueueStore=QueueStore,
+        parse_schedule_time=parse_schedule_time, DEFAULT_SLOTS=DEFAULT_SLOTS)
+
+
+def _schedule_slot_labels(qpub) -> list:
+    """``["Morning 08:30", ...]``: DEFAULT_SLOTS paired with labels by position."""
+    return [f"{label} {slot}"
+            for label, slot in zip(_SCHEDULE_SLOT_LABELS, qpub.DEFAULT_SLOTS)]
+
+
+def _resolve_schedule_time(qpub, choice, sched_date, custom_time,
+                           now=None):
+    """Resolve a schedule choice to a tz-aware local datetime.
+
+    ``choice`` is ``("preset", "HH:MM")`` (next occurrence in local
+    time — the engine rolls a slot that already passed today to
+    tomorrow) or ``("custom", None)`` (``sched_date`` plus
+    ``custom_time`` combined as ``"YYYY-MM-DD HH:MM"``). ``now`` is an
+    optional injectable "current" datetime for deterministic tests.
+    Raises ``ValueError`` on bad input. Headless-safe.
+    """
+    kind, slot = choice
+    if kind == "preset":
+        return qpub.parse_schedule_time(slot, now=now)
+    text = f"{sched_date.isoformat()} {(custom_time or '').strip()}"
+    return qpub.parse_schedule_time(text, now=now)
+
+
+def _format_schedule_local(dt) -> str:
+    """Human-readable local time, e.g. ``"Tue 2026-09-29 12:30 EDT"``."""
+    return dt.strftime("%a %Y-%m-%d %H:%M %Z")
+
+
+def _queue_item_when(item) -> str:
+    """Display string for an item's ``scheduled_at`` (never crashes)."""
+    try:
+        return _format_schedule_local(
+            datetime.fromisoformat(item.scheduled_at))
+    except (ValueError, TypeError):
+        return str(item.scheduled_at)
+
+
+def _enqueue_publish(qpub, store, *, video_path, title, caption, hashtags,
+                     platforms, scheduled_at) -> str:
+    """Build a queued item and hand it to the engine. Returns the item id."""
+    item = qpub.QueuedItem(
+        video_path=video_path, title=title, caption=caption,
+        hashtags=list(hashtags), platforms=list(platforms),
+        scheduled_at=scheduled_at, status="queued", attempts=0,
+        last_error="", published_urls={}, platform_options={})
+    return store.enqueue(item)
+
+
+def _failed_platforms(item) -> list:
+    """Platforms on a failed item that still need publishing.
+
+    A requeue enqueues ONLY these — platforms already in
+    ``published_urls`` are never double-posted (partial-failure rule).
+    Headless-safe.
+    """
+    published = set((getattr(item, "published_urls", None) or {}))
+    return [p for p in (getattr(item, "platforms", None) or [])
+            if p not in published]
+
+
+def _queued_record(title: str, caption: str, hashtags: list, item_id: str,
+                   scheduled_at: str, platforms: list,
+                   queued_at: Optional[str] = None) -> Dict[str, Any]:
+    """Build the ``"queued_publication"`` manifest section. Headless-safe."""
+    return {
+        "queued_at": (queued_at or
+                      datetime.now().isoformat(timespec="seconds")),
+        "item_id": item_id,
+        "scheduled_at": scheduled_at,
+        "platforms": list(platforms),
+        "title": title,
+        "caption": caption,
+        "hashtags": list(hashtags),
+    }
+
+
+def _schedule_for_later_ui(pub, qpub, connected, video_path, title,
+                             caption, hashtags, result) -> None:
+    """Schedule mode: queue the reel for a preset slot or a custom time.
+
+    Presets come from the engine's DEFAULT_SLOTS (08:30 / 12:30 / 18:30
+    local). The resolved local time is shown before anything is
+    enqueued, so there are no surprises. Only connected platforms can
+    be queued to — an unconnected pick is skipped with a warning, the
+    same honesty rule as publish-now.
+    """
+    if qpub is None:
+        st.info(
+            "Scheduled publishing needs survey-publish ≥ 0.2.0 "
+            "(the queue engine):\n\n"
+            "`pip install --upgrade "
+            "git+https://github.com/crieck2010/survey-publish.git`\n\n"
+            "Then re-run this step.")
+        return
+
+    slots = list(qpub.DEFAULT_SLOTS)
+    labels = _schedule_slot_labels(qpub)
+    choice = st.session_state.get("publish_sched_choice")
+    if choice is None or choice[0] not in ("preset", "custom"):
+        choice = ("preset", slots[0])
+
+    st.write("Pick a slot")
+    cols = st.columns(len(slots))
+    for col, slot, label in zip(cols, slots, labels):
+        with col:
+            if st.button(label, key=f"publish_slot_{slot.replace(':', '')}"):
+                st.session_state["publish_sched_choice"] = ("preset", slot)
+                choice = ("preset", slot)
+    st.caption(
+        "Slots are local time — if the slot already passed today, it "
+        "rolls to tomorrow.")
+    st.write("Or a custom date & time")
+    sched_date = st.date_input("Date", value=datetime.now().date(),
+                               key="publish_sched_date")
+    custom_time = st.text_input("Time (HH:MM)", value="12:30",
+                                key="publish_sched_time")
+    if st.button("Use custom date & time", key="publish_sched_custom"):
+        st.session_state["publish_sched_choice"] = ("custom", None)
+        choice = ("custom", None)
+
+    try:
+        when = _resolve_schedule_time(qpub, choice, sched_date, custom_time)
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+    st.write("Will publish at (local time): "
+             f"**{_format_schedule_local(when)}**")
+
+    platforms = st.multiselect(
+        "Platforms", options=_publish_platform_names(pub),
+        default=list(connected), key="publish_sched_platforms",
+        help="Only connected platforms are queued to.")
+    if st.button("Queue for scheduled publish", type="primary",
+                 key="publish_queue"):
+        chosen = [p for p in platforms if p in connected]
+        dropped = [p for p in platforms if p not in connected]
+        if dropped:
+            st.warning("Skipped unconnected platform(s): "
+                       + ", ".join(dropped))
+        if not chosen:
+            st.error("Pick at least one connected platform.")
+            return
+        store = qpub.QueueStore()
+        item_id = _enqueue_publish(
+            qpub, store, video_path=video_path, title=title,
+            caption=caption, hashtags=hashtags, platforms=chosen,
+            scheduled_at=when.isoformat())
+        record = _queued_record(title, caption, hashtags, item_id,
+                                when.isoformat(), chosen)
+        pipeline.record_queued_publication(result.get("manifest_path"),
+                                           record)
+        st.success(
+            f"Queued — id `{item_id}`, publishes "
+            f"{_format_schedule_local(when)} (local time). "
+            "Recorded in the run manifest under "
+            "\"queued_publication\".")
+
+
+def _publish_queue_panel(qpub) -> None:
+    """Queue management: cancel / reschedule queued items, requeue failures."""
+    with st.expander("Publish queue", expanded=False):
+        if qpub is None:
+            st.info("The publish queue needs survey-publish ≥ 0.2.0: "
+                    "`pip install --upgrade "
+                    "git+https://github.com/crieck2010/survey-publish.git`")
+            return
+        store = qpub.QueueStore()
+        items = store.list_queue()
+
+        active = [i for i in items
+                  if i.status in ("queued", "publishing")]
+        if not active:
+            st.caption("Nothing queued.")
+        for item in active:
+            st.write(
+                f"**{item.title or '(untitled)'}** — "
+                f"{_queue_item_when(item)} (local) · "
+                f"{', '.join(item.platforms)} · `{item.status}`")
+            if item.status == "queued":
+                key = item.id.replace("-", "")
+                if st.button("Cancel", key=f"qcancel_{key}"):
+                    store.cancel(item.id)
+                    st.success(f"Canceled `{item.id}`.")
+                new_time = st.text_input(
+                    "New time (HH:MM, or full ISO)", value="",
+                    key=f"qresched_{key}")
+                if st.button("Reschedule", key=f"qresched_go_{key}"):
+                    if not new_time.strip():
+                        st.error("Enter the new time first.")
+                    else:
+                        try:
+                            moved = qpub.parse_schedule_time(
+                                new_time.strip())
+                        except ValueError as exc:
+                            st.error(str(exc))
+                        else:
+                            store.reschedule(item.id, moved.isoformat())
+                            st.success(
+                                "Rescheduled to "
+                                f"{_format_schedule_local(moved)} (local).")
+
+        history = [i for i in items
+                   if i.status in ("published", "failed", "canceled")]
+        if history:
+            st.write("History")
+            for item in history:
+                line = (f"**{item.title or '(untitled)'}** — "
+                        f"{_queue_item_when(item)} (local) · "
+                        f"{', '.join(item.platforms)} · `{item.status}`")
+                if item.status == "failed":
+                    detail = (f" — {item.last_error}"
+                              if item.last_error else "")
+                    st.error(line + detail)
+                    missing = _failed_platforms(item)
+                    if missing and st.button(
+                            "Requeue failed platforms",
+                            key=f"qrequeue_{item.id.replace('-', '')}"):
+                        new_id = _enqueue_publish(
+                            qpub, store, video_path=item.video_path,
+                            title=item.title, caption=item.caption,
+                            hashtags=list(item.hashtags), platforms=missing,
+                            scheduled_at=(datetime.now().astimezone()
+                                          .isoformat()))
+                        st.success(
+                            f"Requeued {', '.join(missing)} as `{new_id}` — "
+                            "platforms that already published are NOT "
+                            "reposted.")
+                elif item.status == "published":
+                    urls = ", ".join(
+                        f"{p}={u}"
+                        for p, u in (item.published_urls or {}).items()
+                        if u)
+                    st.success(line + (f" — {urls}" if urls else ""))
+                else:
+                    st.caption(line)
+
+
 def _publish_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     """Step 9: publish the finished reel to social platforms.
 
+    Two modes per reel. **Publish now** (the v0.10.0 behavior, unchanged):
+    approval happens in-app, the adapters post immediately, and the
+    results are recorded in the manifest. **Schedule for later** queues
+    the reel in the survey-publish >= 0.2.0 queue engine (preset slots
+    Morning 08:30 / Midday 12:30 / Evening 18:30 local, or a custom
+    date+time) and a background ``survey-publish tick`` publishes it
+    when due — the queue fires only while the PC is on and awake with
+    the 15-minute tick job running. A queue panel below the modes lists
+    queued items (cancel / reschedule) plus history, and failed items
+    can be requeued for only the platforms that missed.
+
     All publishing logic lives in the survey-publish engine
-    (``publish.registry`` adapters); this step only collects the
-    approval, builds the requests, shows the results, and records them
-    in the run manifest. Approval is in-app only in this version —
-    email click-to-approve was evaluated and deliberately excluded
-    (link-prefetch hazard, needs public hosting). The reel publishes
-    as-is: survey-animate already muxed the audio track upstream.
+    (``publish.registry`` adapters, ``publish`` queue store); this step
+    only collects the approval, builds the requests, shows the results,
+    and records them in the run manifest. Approval is in-app only in
+    this version — email click-to-approve was evaluated and deliberately
+    excluded (link-prefetch hazard, needs public hosting). The reel
+    publishes as-is: survey-animate already muxed the audio track
+    upstream.
     """
     st.subheader("9 · Publish")
     result = st.session_state.get("result")
@@ -1622,16 +1896,39 @@ def _publish_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     st.caption("The reel publishes as-is — survey-animate already muxed "
                "your audio track upstream.")
 
+    qpub = _publish_queue_peer()
+
     if not connected:
         st.info("Connect at least one platform above to enable publishing.")
-    elif st.button("Approve & Publish", type="primary",
-                   key="publish_approve"):
-        results = _publish_now(pub, video_path, title, caption,
-                               hashtags, connected)
-        record = _publication_record(title, caption, hashtags, results)
-        pipeline.record_publication(result.get("manifest_path"), record)
-        st.session_state["publication"] = record
-        st.session_state["publication_for"] = video_path
+    else:
+        mode = st.radio(
+            "Publish mode", ("Publish now", "Schedule for later"),
+            key="publish_mode",
+            help="Publish now posts immediately on approval. Schedule for "
+                 "later queues the reel in the survey-publish queue engine "
+                 "and a background tick publishes it at the chosen time.")
+        if mode == "Publish now":
+            if st.button("Approve & Publish", type="primary",
+                         key="publish_approve"):
+                results = _publish_now(pub, video_path, title, caption,
+                                       hashtags, connected)
+                record = _publication_record(title, caption, hashtags, results)
+                pipeline.record_publication(result.get("manifest_path"),
+                                            record)
+                st.session_state["publication"] = record
+                st.session_state["publication_for"] = video_path
+        else:
+            _schedule_for_later_ui(pub, qpub, connected, video_path,
+                                   title, caption, hashtags, result)
+
+    _publish_queue_panel(qpub)
+
+    st.info(
+        "Scheduled publishes only fire while this PC is on and awake "
+        "with the 15-minute tick job running (`survey-publish tick`, "
+        "every 15 minutes). See the Task Scheduler setup in the "
+        "survey-publish docs: "
+        "https://github.com/crieck2010/survey-publish/blob/main/docs/SCHEDULING.md")
 
     last = st.session_state.get("publication")
     if last and st.session_state.get("publication_for") == video_path:

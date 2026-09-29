@@ -2546,3 +2546,40 @@ def record_publication(manifest_path: Optional[str],
         with open(manifest_path, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2, sort_keys=True)
     return data
+
+
+def record_queued_publication(manifest_path: Optional[str],
+                              queued: Dict[str, Any]) -> Dict[str, Any]:
+    """Write the ``"queued_publication"`` section into a run's manifest.json.
+
+    Mirrors :func:`record_publication`: appends to the existing manifest
+    (tolerating a missing or unparseable one), so a scheduled publish is
+    traceable from the run that produced it. Expected ``queued`` shape
+    (built by the Publish step in ``app.py``)::
+
+        {
+            "queued_at": "2026-09-28T22:10:00",
+            "item_id": "q-9f2a...",
+            "scheduled_at": "2026-09-29T08:30:00-04:00",
+            "platforms": ["youtube", "tiktok"],
+            "title": "...",
+            "caption": "...",
+            "hashtags": ["reelstudio", ...],
+        }
+
+    Returns the full manifest dict.
+    """
+    data: Dict[str, Any] = {}
+    if manifest_path:
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, ValueError):
+            data = {}
+    data["queued_publication"] = dict(queued)
+    if manifest_path:
+        with open(manifest_path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
+    return data

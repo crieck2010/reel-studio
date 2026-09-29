@@ -1,4 +1,4 @@
-# Publishing (survey-publish peer, v0.10.0)
+# Publishing (survey-publish peer, v0.11.0)
 
 Step 9 of reel-studio publishes the finished reel to social platforms.
 All publishing logic lives in the
@@ -83,6 +83,33 @@ survey-viz during the Run step, i.e. before the Publish step runs) via
 
 `approved_at` is local time. A missing or corrupt manifest is replaced
 with just the publication record rather than crashing.
+
+## Scheduling for later (v0.11.0)
+
+The Publish step's **Schedule for later** mode queues the reel in the
+survey-publish ≥ 0.2.0 queue engine (`publish.QueueStore`,
+`~/.survey-publish/queue.json`) instead of posting immediately:
+
+* **Preset slots** — Morning 08:30, Midday 12:30, Evening 18:30 local
+  (from the engine's `DEFAULT_SLOTS`; a slot that already passed today
+  rolls to tomorrow), or a **custom date + time**. The resolved local
+  time is shown before you press *Queue for scheduled publish*.
+* The platform multiselect defaults to the connected platforms; the
+  queue event is recorded in the run manifest under
+  `"queued_publication"` (item id, scheduled time, platforms, title,
+  caption, hashtags).
+* The **Publish queue** expander below lists queued items with
+  **Cancel** and **Reschedule** controls, and a **History** view of
+  published / failed / canceled items. **Requeue failed platforms**
+  re-enqueues only the platforms missing from `published_urls` — a
+  partial failure never double-posts a success.
+* The queue is fired by `survey-publish tick` (every 15 minutes). The
+  honest limit: **queued publishes only fire while this PC is on and
+  awake with the tick job running.** Set it up with Windows Task
+  Scheduler per the
+  [survey-publish scheduling docs](https://github.com/crieck2010/survey-publish/blob/main/docs/SCHEDULING.md).
+  The typical morning flow: approve once, queue three reels to the
+  three slots, and they drip out through the day on the tick.
 
 ## Honest limits
 
