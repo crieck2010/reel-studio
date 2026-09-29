@@ -2,6 +2,40 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.10.0] - 2026-09-28
+
+### Added
+- **Publish step (step 9)** wired to the new survey-publish engine
+  (optional ninth peer): after generation, review the finished reel in
+  `st.video`, see a per-platform connection panel (YouTube, Instagram,
+  Facebook, TikTok) with the account label when the adapter provides
+  one, and get an expander with the exact
+  `survey-publish connect <platform>` terminal command plus a link to
+  that platform's `docs/SETUP_<PLATFORM>.md` in the survey-publish repo
+  for any platform not connected yet (OAuth needs a browser, so connect
+  is deliberately terminal-based). Edit the title, caption, and
+  hashtags (prefilled from the reel's spec; hashtags default to
+  `reelstudio, dataviz, remotesensing, earthobservation`), then press
+  **Approve & Publish**: the app builds one `PublishRequest` per
+  connected platform, calls the adapter, and shows per-platform results
+  (post URL/id on success, error text on failure). Unconnected
+  platforms are never published to — skipped, not failed.
+- Every approval is recorded in the run's `manifest.json` under a
+  `"publication"` section (`approved_at`, per-platform `ok`/`url_or_id`/
+  `error`, title, caption, hashtags) via the new
+  `studio.pipeline.record_publication()` helper, which appends to the
+  existing manifest written during the Run step (tolerating a missing
+  or corrupt manifest instead of crashing).
+- Approval is in-app only in this version: email click-to-approve was
+  evaluated and deliberately excluded (mail-scanner link-prefetch
+  hazard, needs public hosting). The reel publishes as-is —
+  survey-animate already muxed the audio track upstream.
+- survey-publish added to the peer registry (`studio/peers.py`), the
+  Engine-status panel, `Update reel-studio.bat`, the README stack
+  table + install list, and the new [docs/PUBLISHING.md](docs/PUBLISHING.md)
+  reference. Without the peer installed, step 9 shows the install hint
+  and reels stay local.
+
 ## [0.9.0] - 2026-09-28
 
 ### Added

@@ -24,6 +24,7 @@ inspectable reason it was chosen. No LLM is required at runtime.
 | [survey-schedule](https://github.com/crieck2010/survey-schedule) | Scheduled generation: cron/interval/once jobs + run ledger (optional) | v0.1.0 |
 | [survey-cache](https://github.com/crieck2010/survey-cache) | Smarter render caching: content-addressed frame/MP4 reuse (optional) | v0.1.0 |
 | [survey-derive](https://github.com/crieck2010/survey-derive) | Climatological anomaly products (optional) | v0.1.0 |
+| [survey-publish](https://github.com/crieck2010/survey-publish) | Social-media publishing: per-platform adapters + terminal OAuth connect (optional) | v0.1.0 |
 | **reel-studio** (this repo) | Streamlit web app + UI-free pipeline orchestration | — |
 
 ## Supported data sources
@@ -75,6 +76,8 @@ pip install git+https://github.com/crieck2010/survey-layout.git   # optional: pl
 pip install git+https://github.com/crieck2010/survey-style.git    # optional: style presets
 pip install git+https://github.com/crieck2010/survey-schedule.git # optional: scheduled generation
 pip install git+https://github.com/crieck2010/survey-cache.git    # optional: render caching
+pip install git+https://github.com/crieck2010/survey-derive.git   # optional: derived anomaly products
+pip install git+https://github.com/crieck2010/survey-publish.git  # optional: social publishing
 ```
 
 The app **launches with any peer missing** — the Engine-status panel shows exactly which
@@ -83,7 +86,8 @@ survey-currents, encoding needs survey-animate; survey-layout unlocks the platfo
 aspect ratios, survey-style unlocks one-click style presets, survey-schedule unlocks
 the Schedule step (without it, only the legacy 1080×1920 layout is offered);
 survey-cache unlocks the render cache (without it, every run renders and
-encodes from scratch).
+encodes from scratch); survey-derive unlocks derived anomaly products;
+survey-publish unlocks the Publish step (without it, reels stay local).
 
 ## Run
 
@@ -126,8 +130,9 @@ Your browser opens to `http://localhost:8501` (paste it manually if it doesn't).
 ## Updating
 
 No command line needed: double-click **`Update reel-studio.bat`** in the repo folder.
-It git-pulls reel-studio, upgrades the eight peer engines (survey-viz, survey-currents,
-survey-animate, survey-layout, survey-style, survey-schedule, survey-cache, survey-derive) — from a local checkout when one sits next to the repo, otherwise
+It git-pulls reel-studio, upgrades the nine peer engines (survey-viz, survey-currents,
+survey-animate, survey-layout, survey-style, survey-schedule, survey-cache, survey-derive,
+survey-publish) — from a local checkout when one sits next to the repo, otherwise
 straight from GitHub — and prints the installed versions for confirmation. Run it any
 time a new release is announced, then launch with the **Reel Studio** desktop icon.
 
@@ -136,6 +141,40 @@ Fully offline demo (no network, no key, no ffmpeg):
 ```bash
 python -m studio.demo
 ```
+
+## Publishing
+
+Step 9 of the app publishes the finished reel to social platforms via the
+optional ninth engine, [survey-publish](https://github.com/crieck2010/survey-publish).
+All publishing logic lives in that engine; the app only collects your approval,
+builds the requests, and records the results.
+
+* **Platforms:** YouTube, Instagram, Facebook, TikTok — each with its own
+  adapter and stored credentials.
+* **Prerequisites:** each platform needs its own app/API credentials
+  (API key / OAuth client), set up per that platform's
+  `docs/SETUP_<PLATFORM>.md` in the survey-publish repo.
+* **Connect flow:** connect each platform once from a terminal —
+  `survey-publish connect <platform>` (`survey-publish status` shows what's
+  connected). OAuth needs a browser, so connect is deliberately terminal-based;
+  the app never asks for tokens. Step 9 then shows a per-platform
+  connected/not-connected panel, with the exact connect command for any
+  platform that isn't connected yet.
+* **Approval model:** edit the title, caption, and hashtags (prefilled from the
+  reel), then press **Approve & Publish**. The app publishes only to platforms
+  whose adapter is connected — an unconnected platform is never published to.
+  Approval is in-app only in this version: email click-to-approve was evaluated
+  and deliberately excluded (mail-scanner link prefetching would fire approvals
+  on its own, and it would need public hosting).
+* **Record:** every approval is appended to the run's `manifest.json` under a
+  `"publication"` section (`approved_at`, per-platform `ok`/`url_or_id`/`error`,
+  title, caption, hashtags).
+* **Honest limits:** the reel publishes as-is — audio was already muxed by
+  survey-animate upstream. Platform availability is whatever adapters
+  survey-publish ships; the app shows its documented set and defers to the
+  engine's registry.
+
+See [docs/PUBLISHING.md](docs/PUBLISHING.md) for the full reference.
 
 ## Example descriptions
 
@@ -180,7 +219,7 @@ The app works **fully** without the key — it is never required. See
 
 ## What you'll see
 
-* **Engine status** — eight badges (survey-viz / survey-currents / survey-animate / survey-layout / survey-style / survey-schedule / survey-cache / survey-derive),
+* **Engine status** — nine badges (survey-viz / survey-currents / survey-animate / survey-layout / survey-style / survey-schedule / survey-cache / survey-derive / survey-publish),
   green when installed, amber with the exact install command when missing.
 * **Step 1** — text area with an example description, **Parse** button, then the parsed
   `VizSpec` rendered as JSON (title, `region_key`, `bbox`, `variable`, pinned `source`
@@ -232,15 +271,20 @@ The app works **fully** without the key — it is never required. See
 * **Step 8** — embedded video player, **Download MP4** button, story-caption
   listing when captions were generated, platform + dimensions, and a *Provenance* expander with
   fetch URLs, SHA-256 digests, motion/audio/platform settings, and the spec.
+* **Step 9** — Publish: per-platform connection panel, editable title/caption/hashtags,
+  and **Approve & Publish** to every connected platform (YouTube, Instagram, Facebook,
+  TikTok), with each approval recorded in the run manifest.
 
 ## Docs
 
-* [docs/APP.md](docs/APP.md) — user guide (the 8 steps, LLM assist, troubleshooting)
+* [docs/APP.md](docs/APP.md) — user guide (the 9 steps, LLM assist, troubleshooting)
 * [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the code is organized
 * [docs/INTEROP.md](docs/INTEROP.md) — peer contracts + the interop quirks discovered
   during the 13-source build program (read before extending)
 * [docs/DERIVED.md](docs/DERIVED.md) — derived climatological anomaly
   products: the science, the controls, eligibility rules, and honest limits
+* [docs/PUBLISHING.md](docs/PUBLISHING.md) — the Publish step: per-platform
+  account prerequisites, terminal connect flow, and the in-app approval model
 * [CHANGELOG.md](CHANGELOG.md)
 
 ## Tests

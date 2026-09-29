@@ -2,9 +2,11 @@
 
 UI-free orchestration lives in :mod:`studio.pipeline`; the Streamlit UI
 is ``app.py`` at the repo root. Peers (survey-viz, survey-currents,
-survey-animate, survey-layout) are optional and never hard-imported.
+survey-animate, survey-layout, survey-style, survey-schedule,
+survey-cache, survey-derive, survey-publish) are optional and never
+hard-imported.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.10.0"
 
 __all__ = ["__version__"]

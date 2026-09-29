@@ -24,6 +24,8 @@ import os
 import sys
 import tempfile
 import traceback
+import types
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -38,9 +40,10 @@ except ImportError:  # headless / tests: import still works, main() won't run
 from studio import batch, caching, llm_assist, peers, pipeline, scheduler, styling
 
 APP_TITLE = "reel-studio"
-APP_VERSION = "0.9.0"
+APP_VERSION = "0.10.0"
 PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate",
-              "survey-layout", "survey-style", "survey-schedule")
+              "survey-layout", "survey-style", "survey-schedule",
+              "survey-publish")
 
 #: Minimum peer versions for the v0.4.0 features.
 MIN_VIZ_STORY = (0, 17, 0)      # story captions + motion refine intents
@@ -62,6 +65,20 @@ PAN_LABELS = {
 
 #: Audio extensions the uploader accepts (ffmpeg decodes all of these).
 AUDIO_TYPES = ["mp3", "wav", "ogg", "flac", "m4a", "aac", "opus", "wma"]
+
+#: Social platforms the Publish step knows about. When survey-publish is
+#: installed its registry's ``list_platforms()`` is authoritative; this
+#: is the fallback (and the documented set).
+PUBLISH_PLATFORM_ORDER = ("youtube", "instagram", "facebook", "tiktok")
+
+#: Per-platform connect docs in the survey-publish repo (paths per the
+#: interface contract — verify against the repo once it ships).
+PUBLISH_SETUP_DOCS = {
+    "youtube": "docs/SETUP_YOUTUBE.md",
+    "instagram": "docs/SETUP_INSTAGRAM.md",
+    "facebook": "docs/SETUP_FACEBOOK.md",
+    "tiktok": "docs/SETUP_TIKTOK.md",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -1352,6 +1369,293 @@ def _caption_events(manifest_path: Optional[str]) -> list:
     return list(events) if isinstance(events, list) else []
 
 
+# ---------------------------------------------------------------------------
+# Publish step (survey-publish peer, optional ninth engine)
+# ---------------------------------------------------------------------------
+
+def _publish_peer():
+    """Import the survey-publish API (models + registry).
+
+    Defensive: returns ``None`` when the peer is not installed, so the
+    step can show the install hint instead of crashing.
+    """
+    try:
+        import publish.models as models
+        import publish.registry as registry
+    except ImportError:
+        return None
+    return types.SimpleNamespace(models=models, registry=registry)
+
+
+def _publish_platform_names(pub) -> list:
+    """Platform names from the peer registry, in the documented order.
+
+    Falls back to :data:`PUBLISH_PLATFORM_ORDER` when the registry
+    lists nothing (or its ``list_platforms()`` is unusable).
+    """
+    names: list = []
+    try:
+        names = [str(n) for n in pub.registry.list_platforms() if n]
+    except Exception:
+        names = []
+    ordered = [n for n in PUBLISH_PLATFORM_ORDER if n in names]
+    ordered += [n for n in names if n not in ordered]
+    return ordered or list(PUBLISH_PLATFORM_ORDER)
+
+
+def _adapter_label(adapter) -> str:
+    """Best-effort account label from an adapter (``""`` when unavailable)."""
+    try:
+        label = getattr(adapter, "account_label", None)
+        if callable(label):
+            label = label()
+        return str(label or "")
+    except Exception:
+        return ""
+
+
+def _probe_publish_adapters(pub) -> Dict[str, Dict[str, Any]]:
+    """Probe every platform: ``{name: {connected, label, adapter}}``.
+
+    Each adapter is probed defensively — one broken platform never
+    hides the others.
+    """
+    probed: Dict[str, Dict[str, Any]] = {}
+    for name in _publish_platform_names(pub):
+        try:
+            adapter = pub.registry.get_adapter(name)
+        except Exception:
+            probed[name] = {"connected": False, "label": "", "adapter": None}
+            continue
+        try:
+            connected = bool(adapter.is_connected())
+        except Exception:
+            connected = False
+        probed[name] = {
+            "connected": connected,
+            "label": _adapter_label(adapter) if connected else "",
+            "adapter": adapter,
+        }
+    return probed
+
+
+def _parse_hashtags(raw: str) -> list:
+    """Split a comma-separated hashtag field into clean tags (no ``#``)."""
+    return [h.strip().lstrip("#").strip() for h in (raw or "").split(",")
+            if h.strip().lstrip("#").strip()]
+
+
+def _publish_defaults(result: Dict[str, Any]) -> Dict[str, str]:
+    """Prefill for the Publish step's title / caption / hashtag fields.
+
+    Title comes from the run's spec; the caption adds variable, region
+    and date detail when the spec carries them. Headless-safe.
+    """
+    spec = (result or {}).get("spec_dict") or {}
+    title = str(spec.get("title") or "reel-studio reel")
+    variable = str(spec.get("variable") or "")
+    region = str(spec.get("region_key") or spec.get("region") or "")
+    region = region.replace("-", " ").replace("_", " ")
+    date_bits = [str(spec.get(k)) for k in
+                 ("start_date", "end_date", "start", "end", "date_range")
+                 if spec.get(k)]
+    caption_bits = [title]
+    detail = " · ".join(b for b in (variable, region) if b)
+    if detail:
+        caption_bits.append(detail)
+    if date_bits:
+        caption_bits.append(" – ".join(date_bits))
+    caption_bits.append("Generated locally with reel-studio.")
+    return {
+        "title": title[:100],
+        "caption": "\n".join(caption_bits),
+        "hashtags": "reelstudio, dataviz, remotesensing, earthobservation",
+    }
+
+
+def _publish_now(pub, video_path: str, title: str, caption: str,
+                 hashtags: list, platform_names: list
+                 ) -> Dict[str, Dict[str, str]]:
+    """Publish the reel to each named platform's adapter.
+
+    Only platforms whose adapter reports connected are published to —
+    unconnected platforms are never published to (and never listed as
+    failures). Returns ``{name: {"ok", "url_or_id", "error"}}``, the
+    shape recorded into the manifest's ``"publication"`` section.
+    Headless-safe (takes the peer namespace, so tests can fake it).
+    """
+    results: Dict[str, Dict[str, str]] = {}
+    for name in platform_names:
+        try:
+            adapter = pub.registry.get_adapter(name)
+        except Exception as exc:
+            results[name] = {"ok": False, "url_or_id": "",
+                             "error": f"no adapter: {exc}"}
+            continue
+        try:
+            if not adapter.is_connected():
+                continue  # never publish anywhere unconnected
+        except Exception as exc:
+            results[name] = {"ok": False, "url_or_id": "",
+                             "error": f"status check failed: {exc}"}
+            continue
+        try:
+            request = pub.models.PublishRequest(
+                video_path=video_path, title=title, caption=caption,
+                hashtags=list(hashtags), platform_options={})
+            outcome = adapter.publish(request)
+            results[name] = {
+                "ok": bool(getattr(outcome, "ok", False)),
+                "url_or_id": str(getattr(outcome, "url_or_id", "") or ""),
+                "error": str(getattr(outcome, "error", "") or ""),
+            }
+        except Exception as exc:
+            results[name] = {"ok": False, "url_or_id": "", "error": str(exc)}
+    return results
+
+
+def _publication_record(title: str, caption: str, hashtags: list,
+                        results: Dict[str, Dict[str, str]],
+                        approved_at: Optional[str] = None) -> Dict[str, Any]:
+    """Build the ``"publication"`` manifest section. Headless-safe."""
+    return {
+        "approved_at": (approved_at or
+                        datetime.now().isoformat(timespec="seconds")),
+        "platforms": {name: {"ok": r.get("ok", False),
+                             "url_or_id": r.get("url_or_id", ""),
+                             "error": r.get("error", "")}
+                      for name, r in results.items()},
+        "title": title,
+        "caption": caption,
+        "hashtags": list(hashtags),
+    }
+
+
+def _publish_step(statuses: Dict[str, peers.PeerStatus]) -> None:
+    """Step 9: publish the finished reel to social platforms.
+
+    All publishing logic lives in the survey-publish engine
+    (``publish.registry`` adapters); this step only collects the
+    approval, builds the requests, shows the results, and records them
+    in the run manifest. Approval is in-app only in this version —
+    email click-to-approve was evaluated and deliberately excluded
+    (link-prefetch hazard, needs public hosting). The reel publishes
+    as-is: survey-animate already muxed the audio track upstream.
+    """
+    st.subheader("9 · Publish")
+    result = st.session_state.get("result")
+    if not result:
+        st.info("Generate a reel first (step 8) — the Publish step picks "
+                "it up from there.")
+        return
+    video_path = result.get("video_path")
+    if not video_path or not os.path.isfile(video_path):
+        st.warning("The last run's video file is missing — re-run step 8 "
+                   "before publishing.")
+        return
+
+    st.video(video_path)
+
+    status = statuses.get("survey-publish")
+    if status is None or not status.installed:
+        st.info(
+            "Publishing needs the survey-publish engine:\n\n"
+            f"`{status.pip_command if status else 'pip install git+https://github.com/crieck2010/survey-publish.git'}`\n\n"
+            "Without it, reels stay local — nothing else changes. Connect "
+            "each platform once from a terminal with "
+            "`survey-publish connect <platform>` (OAuth needs a browser, "
+            "so terminal-based connect is the honest flow), then this step "
+            "lights up.")
+        return
+
+    pub = _publish_peer()
+    if pub is None:  # pragma: no cover - load_peers saw it installed
+        st.error("survey-publish was detected but its modules would not "
+                 "import — reinstall it "
+                 f"(`{status.pip_command}`).")
+        return
+
+    probed = _probe_publish_adapters(pub)
+    connected = [n for n, p in probed.items() if p["connected"]]
+
+    st.write("Platform connections")
+    cols = st.columns(len(probed))
+    for col, name in zip(cols, probed):
+        with col:
+            info = probed[name]
+            if info["connected"]:
+                st.success(f"**{name}**\n\nconnected"
+                           + (f" — {info['label']}" if info["label"] else ""))
+            else:
+                st.warning(f"**{name}**\n\nnot connected")
+    for name, info in probed.items():
+        if info["connected"]:
+            continue
+        setup_doc = PUBLISH_SETUP_DOCS.get(name, "docs/")
+        repo_url = ("https://github.com/crieck2010/survey-publish/blob/main/"
+                    + setup_doc)
+        with st.expander(f"Connect {name}", expanded=False):
+            st.code(f"survey-publish connect {name}", language="bash")
+            st.caption(
+                "OAuth needs a browser, so connect runs in your terminal, "
+                "not here. Check the per-platform app-credentials "
+                "prerequisites first, then re-run this step to refresh the "
+                "status:")
+            st.markdown(f"[survey-publish/{setup_doc}]({repo_url})")
+
+    # --- editable metadata, prefilled from the run's spec ------------------
+    if st.session_state.get("publish_for") != video_path:
+        defaults = _publish_defaults(result)
+        st.session_state["publish_title"] = defaults["title"]
+        st.session_state["publish_caption"] = defaults["caption"]
+        st.session_state["publish_hashtags"] = defaults["hashtags"]
+        st.session_state["publish_for"] = video_path
+    title = st.text_input("Title", key="publish_title")
+    caption = st.text_area("Caption", key="publish_caption", height=110)
+    raw_tags = st.text_input(
+        "Hashtags (comma-separated)", key="publish_hashtags",
+        help="Posted with the caption on each platform; a leading # is "
+             "optional.")
+    hashtags = _parse_hashtags(raw_tags)
+    if hashtags:
+        st.caption("Will post: " + " ".join(f"#{h}" for h in hashtags))
+    st.caption("The reel publishes as-is — survey-animate already muxed "
+               "your audio track upstream.")
+
+    if not connected:
+        st.info("Connect at least one platform above to enable publishing.")
+    elif st.button("Approve & Publish", type="primary",
+                   key="publish_approve"):
+        results = _publish_now(pub, video_path, title, caption,
+                               hashtags, connected)
+        record = _publication_record(title, caption, hashtags, results)
+        pipeline.record_publication(result.get("manifest_path"), record)
+        st.session_state["publication"] = record
+        st.session_state["publication_for"] = video_path
+
+    last = st.session_state.get("publication")
+    if last and st.session_state.get("publication_for") == video_path:
+        st.write("Last approval")
+        for name, plat in last["platforms"].items():
+            if plat.get("ok"):
+                link = plat.get("url_or_id") or ""
+                shown = (f"[{link}]({link})" if link.startswith("http")
+                         else f"`{link}`" if link else "")
+                st.success(f"**{name}**: published" +
+                           (f" — {shown}" if shown else ""))
+            else:
+                st.error(f"**{name}**: failed — "
+                         f"{plat.get('error') or 'unknown error'}")
+        st.caption(f"Approved at {last.get('approved_at')} (local time), "
+                   "recorded in the run manifest under "
+                   "\"publication\".")
+    st.caption(
+        "Approval happens in this app only — pressing the button above "
+        "is the approval. Email click-to-approve was evaluated and "
+        "deliberately excluded: approval links get prefetched by mail "
+        "scanners (link-prefetch hazard) and would need public hosting.")
+
+
 def main() -> None:
     st.set_page_config(page_title=APP_TITLE, page_icon="🎬", layout="centered")
     st.title("🎬 reel-studio")
@@ -1375,6 +1679,8 @@ def main() -> None:
     _schedule_step(statuses)
     st.divider()
     _run_step(statuses)
+    st.divider()
+    _publish_step(statuses)
 
     with st.expander("About the optional LLM assist"):
         st.write(

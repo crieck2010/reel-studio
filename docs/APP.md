@@ -13,7 +13,7 @@ thin studio layer over three engines:
 * **survey-animate** — frame → MP4 encoder (`render_video`, resolves
   ffmpeg itself)
 
-## The 8-step flow
+## The 9-step flow
 
 ### Step 1 — Describe and parse
 
@@ -219,6 +219,31 @@ on these paths.
 * **Provenance** expander: fetch URLs, SHA-256 digests, motion/audio/
   platform settings, the full spec JSON, frame/manifest paths,
   encoder details
+
+### Step 9 — Publish (survey-publish peer, optional ninth engine)
+
+* Finished reel shown again with `st.video`
+* Per-platform connection panel (YouTube, Instagram, Facebook,
+  TikTok) with the account label when the adapter provides one;
+  unconnected platforms get an expander with the exact
+  `survey-publish connect <platform>` terminal command and a link to
+  that platform's `docs/SETUP_<PLATFORM>.md` in the survey-publish
+  repo (OAuth needs a browser, so connect is terminal-based)
+* Editable title, caption, and hashtags — prefilled from the reel's
+  spec; hashtags default to
+  `reelstudio, dataviz, remotesensing, earthobservation`
+* **Approve & Publish** publishes to every *connected* platform only
+  (unconnected platforms are never published to); results show per
+  platform — post URL/id on success, error text on failure
+* Every approval is recorded in the run's `manifest.json` under a
+  `"publication"` section (`approved_at`, per-platform
+  `ok`/`url_or_id`/`error`, title, caption, hashtags)
+* Approval is in-app only in this version — email click-to-approve was
+  evaluated and deliberately excluded (mail-scanner link-prefetch
+  hazard, needs public hosting). The reel publishes as-is;
+  survey-animate already muxed the audio track upstream
+
+See [docs/PUBLISHING.md](PUBLISHING.md) for the full reference.
 
 ## The optional LLM assist
 

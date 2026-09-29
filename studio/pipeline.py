@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import inspect
+import json
 import os
 import types
 from dataclasses import dataclass, field, replace
@@ -2503,3 +2504,45 @@ def run_pipeline(
         platform=platform or "legacy",
         provenance=provenance,
     )
+
+
+def record_publication(manifest_path: Optional[str],
+                       publication: Dict[str, Any]) -> Dict[str, Any]:
+    """Write the ``"publication"`` section into a run's manifest.json.
+
+    The frame manifest is written by survey-viz during the Run step,
+    i.e. *before* the Publish step ever runs, so publishing appends
+    to the existing ``manifest.json`` rather than writing its own.
+
+    Expected ``publication`` shape (built by the Publish step in
+    ``app.py``)::
+
+        {
+            "approved_at": "2026-09-28T21:40:00",
+            "platforms": {
+                "youtube": {"ok": True, "url_or_id": "...", "error": ""},
+            },
+            "title": "...",
+            "caption": "...",
+            "hashtags": ["reelstudio", ...],
+        }
+
+    A missing, unreadable, or unparseable manifest is replaced by an
+    empty dict (honesty: no crash, the publication record is still
+    created). Returns the full manifest dict. The file is written with
+    sorted keys and 2-space indent so it stays diff-friendly.
+    """
+    data: Dict[str, Any] = {}
+    if manifest_path:
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, ValueError):
+            data = {}
+    data["publication"] = dict(publication)
+    if manifest_path:
+        with open(manifest_path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
+    return data

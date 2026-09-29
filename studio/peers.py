@@ -1,6 +1,6 @@
 """Optional peer imports with graceful degradation.
 
-The eight peers are separate packages, installed from their own GitHub
+The nine peers are separate packages, installed from their own GitHub
 repos. Nothing in reel-studio hard-imports them: :func:`load_peers`
 tries each one and records what is missing, :func:`require_peer` raises
 a :class:`MissingPeerError` whose message names the exact
@@ -8,13 +8,13 @@ a :class:`MissingPeerError` whose message names the exact
 :func:`wire_peers` builds the callables namespace that
 :mod:`studio.pipeline` runs against. survey-layout is the optional
 fourth peer, survey-style the optional fifth, survey-schedule the
-optional sixth, survey-cache the optional seventh, and survey-derive
-the optional eighth: none is ever
+optional sixth, survey-cache the optional seventh, survey-derive
+the optional eighth, and survey-publish the optional ninth: none is ever
 *required* (the legacy 1080×1920 layout always works, the manual
 aesthetics controls always work, one-off plus batch generation always
-work, rendering without a cache always works, and raw-variable reels
-always work), and the UI offers their features only when they are
-installed.
+work, rendering without a cache always works, raw-variable reels
+always work, and reels simply stay unpublished), and the UI offers
+their features only when they are installed.
 """
 
 from __future__ import annotations
@@ -76,6 +76,14 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
                       "standardized_anomaly / percent_of_normal: "
                       "climatological anomaly maps vs a day-of-year "
                       "baseline, computed deterministically with NumPy)",
+    },
+    "survey-publish": {
+        "module": "publish",
+        "pip": "pip install git+https://github.com/crieck2010/survey-publish.git",
+        "needed_for": "social-media publishing for the Publish step "
+                      "(publish.registry: YouTube / Instagram / Facebook / "
+                      "TikTok adapters with terminal-based OAuth connect, "
+                      "publish.models.PublishRequest / PublishResult)",
     },
 }
 

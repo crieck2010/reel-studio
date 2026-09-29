@@ -1,11 +1,14 @@
 # reel-studio interop: peer contracts
 
-reel-studio integrates eight peer engines. All contracts below were
+reel-studio integrates nine peer engines. All contracts below were
 verified against the peers' **actual code** (survey-currents v0.15.0,
 survey-viz v0.19.0, survey-animate v0.2.0, survey-layout v0.1.0,
 survey-style v0.1.0, survey-schedule v0.1.0, survey-cache v0.1.0,
 survey-derive v0.1.0), not
-guesses. reel-studio never
+guesses. survey-publish's adapter contract (publish.models /
+publish.registry) follows the agreed interface and has not yet been
+verified against shipped code — it is not covered by the contracts
+below. reel-studio never
 hard-imports peers and never imports peer internals beyond the entry
 points listed here.
 
