@@ -191,6 +191,21 @@ cached MP4 instead of re-rendering; new satellite data always
 re-renders honestly (see `docs/CACHING.md`). `REEL_STUDIO_CACHE=0`
 disables it entirely.
 
+**Suggested time window** (optional) — with the survey-timescales peer
+installed, the Run step shows a time-window expander: start/end date
+pickers (defaulting to the spec's parsed dates) plus a one-click
+**Suggest window** button. The engine suggests a [start, end] framing
+tuned to the spec's variable and region — season alignment (fire
+season, melt season), trailing event-density windows, the full annual
+cycle, trend horizons — and says why (the framing mode and reason are
+shown under the button). The suggestion only ever fills the two
+pickers: you can edit them freely afterwards, and the Run button uses
+whatever they hold (explicit dates always win; with the peer missing
+the dates stay exactly as parsed). For the `tp` variable the engine is
+called with the spec's pinned or regionally-resolved source so ERA5 and
+IMERG get their own framings; static underlays (bathymetry/elevation)
+get a plain-words "no time dimension" note instead of a window.
+
 1. **Fetches** — the spec's variable for the spec's bbox (30-day stride
    for daily sources) plus a context series where the adapter provides
    one, both with provenance (source URL, SHA-256, retrieval time).

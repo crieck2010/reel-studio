@@ -25,6 +25,7 @@ inspectable reason it was chosen. No LLM is required at runtime.
 | [survey-cache](https://github.com/crieck2010/survey-cache) | Smarter render caching: content-addressed frame/MP4 reuse (optional) | v0.1.0 |
 | [survey-derive](https://github.com/crieck2010/survey-derive) | Climatological anomaly products (optional) | v0.1.0 |
 | [survey-publish](https://github.com/crieck2010/survey-publish) | Social-media publishing: per-platform adapters + terminal OAuth connect (optional) | v0.1.0 |
+| [survey-timescales](https://github.com/crieck2010/survey-timescales) | Suggested time-window framing: season/cycle/event-density modes + reasons (optional) | v0.1.0 |
 | **reel-studio** (this repo) | Streamlit web app + UI-free pipeline orchestration | — |
 
 ## Supported data sources
@@ -78,6 +79,7 @@ pip install git+https://github.com/crieck2010/survey-schedule.git # optional: sc
 pip install git+https://github.com/crieck2010/survey-cache.git    # optional: render caching
 pip install git+https://github.com/crieck2010/survey-derive.git   # optional: derived anomaly products
 pip install git+https://github.com/crieck2010/survey-publish.git  # optional: social publishing
+pip install git+https://github.com/crieck2010/survey-timescales.git  # optional: suggested time windows
 ```
 
 The app **launches with any peer missing** — the Engine-status panel shows exactly which
@@ -87,7 +89,9 @@ aspect ratios, survey-style unlocks one-click style presets, survey-schedule unl
 the Schedule step (without it, only the legacy 1080×1920 layout is offered);
 survey-cache unlocks the render cache (without it, every run renders and
 encodes from scratch); survey-derive unlocks derived anomaly products;
-survey-publish unlocks the Publish step (without it, reels stay local).
+survey-publish unlocks the Publish step (without it, reels stay local);
+survey-timescales unlocks the Suggested window control in the Run step
+(without it, the dates stay exactly as parsed).
 
 ## Run
 
@@ -130,9 +134,9 @@ Your browser opens to `http://localhost:8501` (paste it manually if it doesn't).
 ## Updating
 
 No command line needed: double-click **`Update reel-studio.bat`** in the repo folder.
-It git-pulls reel-studio, upgrades the nine peer engines (survey-viz, survey-currents,
+It git-pulls reel-studio, upgrades the ten peer engines (survey-viz, survey-currents,
 survey-animate, survey-layout, survey-style, survey-schedule, survey-cache, survey-derive,
-survey-publish) — from a local checkout when one sits next to the repo, otherwise
+survey-publish, survey-timescales) — from a local checkout when one sits next to the repo, otherwise
 straight from GitHub — and prints the installed versions for confirmation. Run it any
 time a new release is announced, then launch with the **Reel Studio** desktop icon.
 
@@ -265,7 +269,11 @@ The app works **fully** without the key — it is never required. See
   percent of normal vs a user-chosen baseline period, default 1991–2020),
   then **Refine in plain language** ("zoom in on the Gulf of Mexico
   and use a warmer colormap", "add a slow zoom in during the video"),
-  then the **Run** button, progress bar with live status messages
+  a **Time window** expander with start/end pickers plus a one-click
+  **Suggest window** control (with the optional survey-timescales
+  engine: the engine suggests the window for this variable + region and
+  says why — your edits always win), then the **Run** button, progress
+  bar with live status messages
   ("Fetching NOAA GLSEA sea-surface-temperature grid…", "Rendering
   reel frames…", "Encoding MP4…").
 * **Step 8** — embedded video player, **Download MP4** button, story-caption

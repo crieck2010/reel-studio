@@ -1,6 +1,6 @@
 """Optional peer imports with graceful degradation.
 
-The nine peers are separate packages, installed from their own GitHub
+The ten peers are separate packages, installed from their own GitHub
 repos. Nothing in reel-studio hard-imports them: :func:`load_peers`
 tries each one and records what is missing, :func:`require_peer` raises
 a :class:`MissingPeerError` whose message names the exact
@@ -9,11 +9,13 @@ a :class:`MissingPeerError` whose message names the exact
 :mod:`studio.pipeline` runs against. survey-layout is the optional
 fourth peer, survey-style the optional fifth, survey-schedule the
 optional sixth, survey-cache the optional seventh, survey-derive
-the optional eighth, and survey-publish the optional ninth: none is ever
+the optional eighth, survey-publish the optional ninth, and
+survey-timescales the optional tenth: none is ever
 *required* (the legacy 1080×1920 layout always works, the manual
 aesthetics controls always work, one-off plus batch generation always
 work, rendering without a cache always works, raw-variable reels
-always work, and reels simply stay unpublished), and the UI offers
+always work, reels simply stay unpublished, and the suggested-window
+control simply stays hidden), and the UI offers
 their features only when they are installed.
 """
 
@@ -89,6 +91,14 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
                       "QueueStore / parse_schedule_time / DEFAULT_SLOTS, "
                       "fired by `survey-publish tick` on a 15-minute "
                       "schedule)",
+    },
+    "survey-timescales": {
+        "module": "timescales",
+        "pip": "pip install git+https://github.com/crieck2010/survey-timescales.git",
+        "needed_for": "suggested time-window framing for the Run step "
+                      "(timescales.suggest_window: season / trailing / "
+                      "cycle / trend / event-density modes plus the "
+                      "human-readable reason for the [start, end] window)",
     },
 }
 
@@ -243,6 +253,13 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         derive = importlib.import_module("derive")
     except ImportError:
         derive = None
+    # survey-timescales is the optional tenth peer (suggested time
+    # windows): None when it is missing, and the UI simply hides the
+    # Suggested window control instead of crashing.
+    try:
+        timescales = importlib.import_module("timescales")
+    except ImportError:
+        timescales = None
 
     return types.SimpleNamespace(
         parse_description=viz.parse_description,
@@ -296,4 +313,9 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         # with the install command only on actual use.
         derive=derive,
         derive_pip=PEER_SPECS["survey-derive"]["pip"],
+        # survey-timescales is optional (see above): suggest_window is
+        # None when it is missing, and the UI hides the control instead
+        # of crashing.
+        suggest_window=(timescales.suggest_window if timescales else None),
+        timescales_pip=PEER_SPECS["survey-timescales"]["pip"],
     )

@@ -2,7 +2,7 @@
 
 ``Update reel-studio.bat`` cannot execute on Linux, so this test pins
 the script's essential behavior by content: it must pull the repo,
-upgrade all nine peers (from a local checkout when present, from
+upgrade all ten peers (from a local checkout when present, from
 GitHub otherwise), report installed versions, and wait before closing.
 """
 
@@ -15,7 +15,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BAT = os.path.join(REPO_ROOT, "Update reel-studio.bat")
 PEERS = ("survey-viz", "survey-currents", "survey-animate",
          "survey-layout", "survey-style", "survey-schedule",
-         "survey-cache", "survey-derive", "survey-publish")
+         "survey-cache", "survey-derive", "survey-publish",
+         "survey-timescales")
 
 
 def _text():
@@ -53,7 +54,7 @@ def test_updater_handles_all_peers():
 def test_updater_reports_versions():
     text = _text()
     for mod in ("viz", "currents", "animate", "layout", "style",
-                "schedx", "cachex", "derive", "publish"):
+                "schedx", "cachex", "derive", "publish", "timescales"):
         assert f"import {mod}" in text
         assert "not installed" in text
 

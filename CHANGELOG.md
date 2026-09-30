@@ -2,6 +2,39 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.14.0] - 2026-09-30
+
+### Added
+- **Suggested time window** (survey-timescales, optional tenth peer).
+  The Run step gains a *Time window: suggested framing* expander with
+  start/end date pickers (defaulting to the spec's parsed dates) plus a
+  one-click **Suggest window** button. The engine suggests a `[start,
+  end]` framing tuned to the spec's variable and region — season
+  alignment (fire season, melt season), trailing event-density windows,
+  the full annual cycle, trend horizons — and the framing mode + reason
+  string are shown under the button. The suggestion only ever fills the
+  two pickers: the user can edit them freely afterwards, and the Run
+  button consumes the pickers' values (explicit dates always win —
+  user-typed dates stay authoritative). With the peer missing the whole
+  control hides behind an explanatory note with the install command —
+  never a crash. Details:
+  - New UI-free engine-side module `studio/timescale.py` (no Streamlit
+    imports): `suggest()` calls `timescales.suggest_window(variable,
+    region=region_key, today=..., source=...)`; `resolve_source()`
+    passes the spec's pinned source, else the regionally-resolved one
+    via `viz.sources.resolve_source` — this disambiguates ERA5 vs
+    IMERG for the `tp` variable; `override_with_pickers()` applies
+    picker values to the run's spec copy (validated: start-after-end
+    is refused with a plain-words warning).
+  - Static underlays (bathymetry/elevation) get a "no time window
+    applies" note instead of a window (`StaticVariableError` surfaced
+    honestly).
+  - `Update reel-studio.bat` now upgrades ten peers (adds
+    survey-timescales).
+  - Peer wiring follows the established optional-peer pattern
+    (`PEER_SPECS` entry, `wire_peers` exposes `suggest_window` /
+    `timescales_pip`, graceful degradation throughout).
+
 ## [0.13.0] - 2026-09-29
 
 ### Added

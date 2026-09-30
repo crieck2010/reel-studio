@@ -19,6 +19,7 @@ the deterministic parser fails; the app works fully without it.
 from __future__ import annotations
 
 import inspect
+import importlib
 import json
 import os
 import sys
@@ -37,10 +38,10 @@ try:
 except ImportError:  # headless / tests: import still works, main() won't run
     st = None  # type: ignore
 
-from studio import batch, caching, llm_assist, peers, pipeline, scheduler, styling
+from studio import batch, caching, llm_assist, peers, pipeline, scheduler, styling, timescale
 
 APP_TITLE = "reel-studio"
-APP_VERSION = "0.13.0"
+APP_VERSION = "0.14.0"
 PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate",
               "survey-layout", "survey-style", "survey-schedule",
               "survey-publish")
@@ -194,6 +195,11 @@ def _parse_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     st.session_state["spec_dict"] = spec_dict
     st.session_state["description"] = text
     st.session_state["style_preset"] = None  # fresh parse, no preset yet
+    # Fresh parse, fresh window: drop any suggestion/picker state so the
+    # Time window pickers re-initialize from this spec's dates.
+    for key in (timescale.START_KEY, timescale.END_KEY,
+                timescale.SUGGESTION_KEY, timescale.ERROR_KEY):
+        st.session_state.pop(key, None)
     if used_assist:
         st.info("The deterministic parser could not handle this description, "
                 "so one LLM assist attempt was used (LLM_API_KEY was set). "
@@ -1152,6 +1158,136 @@ def _derived_section(statuses: Dict[str, peers.PeerStatus]) -> None:
                    "0.19.0 at render time.")
 
 
+def _timescale_enabled(statuses: Dict[str, peers.PeerStatus]) -> bool:
+    """True when the optional survey-timescales peer is installed."""
+    ts_status = statuses.get("survey-timescales")
+    return ts_status is not None and ts_status.installed
+
+
+def _timescale_resolver(statuses: Dict[str, peers.PeerStatus]):
+    """The viz source resolver for the tp disambiguation, or None.
+
+    Precedence mirrors the pipeline's source routing: the spec's own
+    pinned ``source`` wins (see :func:`studio.timescale.resolve_source`);
+    this only supplies the regional default when nothing is pinned.
+    """
+    viz_status = statuses.get("survey-viz")
+    if viz_status is None or not viz_status.installed:
+        return None
+    try:
+        return importlib.import_module("viz.sources").resolve_source
+    except (ImportError, AttributeError):
+        return None
+
+
+def _apply_timescale_suggestion(statuses: Dict[str, peers.PeerStatus]) -> None:
+    """on_click callback for the Suggest window button.
+
+    Runs before the script body on the click's rerun, so it may only
+    touch session state — never widgets. The engine's (start, end,
+    mode, reason) only ever lands in the two pickers plus a display
+    note — the user can edit the dates freely afterwards, and the
+    pickers are what the Run button consumes. Static variables
+    (bathymetry/elevation) get a plain-words note instead of a window.
+    """
+    spec_dict = st.session_state.get("spec_dict") or {}
+    ts_module = statuses["survey-timescales"].module
+    spec = types.SimpleNamespace(
+        variable=spec_dict.get("variable"),
+        region_key=spec_dict.get("region_key"),
+        source=spec_dict.get("source") or "")
+    static_err = getattr(ts_module, "StaticVariableError", ())
+    try:
+        suggestion = timescale.suggest(
+            spec, today=datetime.now().date(),
+            timescales_module=ts_module,
+            resolver=_timescale_resolver(statuses))
+    except static_err as exc:
+        st.session_state[timescale.SUGGESTION_KEY] = None
+        st.session_state[timescale.ERROR_KEY] = (
+            "warning",
+            f"No time window applies to {spec_dict.get('variable')!r} — "
+            f"{exc}")
+        return
+    except Exception as exc:
+        st.session_state[timescale.SUGGESTION_KEY] = None
+        st.session_state[timescale.ERROR_KEY] = (
+            "error", f"Could not suggest a window: {exc}")
+        return
+    st.session_state[timescale.ERROR_KEY] = None
+    st.session_state[timescale.START_KEY] = suggestion.start
+    st.session_state[timescale.END_KEY] = suggestion.end
+    st.session_state[timescale.SUGGESTION_KEY] = {
+        "start": suggestion.start.isoformat(),
+        "end": suggestion.end.isoformat(),
+        "mode": suggestion.mode,
+        "reason": suggestion.reason,
+    }
+
+
+def _timescale_section(statuses: Dict[str, peers.PeerStatus]) -> None:
+    """'Suggested window' — time-window pickers + one-click suggestion.
+
+    Inside the Run step, before the button. The survey-timescales peer
+    (optional tenth engine) suggests a [start, end] framing tuned to
+    the spec's variable and region (season alignment, trailing
+    event-density windows, annual cycles, trend horizons) and says why.
+    The suggestion only ever fills the two date pickers — the user can
+    edit them freely afterwards, and the Run button consumes the
+    pickers' values. With the peer missing, the control is hidden and an
+    explanatory note shows instead: never a crash.
+    """
+    ts_status = statuses.get("survey-timescales")
+    pip_cmd = (ts_status.pip_command if ts_status is not None
+               else "pip install "
+                    "git+https://github.com/crieck2010/survey-timescales.git")
+    with st.expander("Time window: suggested framing (optional)",
+                     expanded=False):
+        spec_dict = st.session_state.get("spec_dict") or {}
+        if not spec_dict:
+            st.info("Parse a description first (step 1) — the suggestion "
+                    "is tuned to that spec's variable and region.")
+            return
+        if not _timescale_enabled(statuses):
+            st.info("One click can suggest the right time window for this "
+                    "variable and region — fire season, melt season, the "
+                    "full annual cycle, an event-density window — and say "
+                    f"why:\n\n`{pip_cmd}`\n\n"
+                    "Without it, the dates stay exactly as parsed — nothing "
+                    "else changes.")
+            return
+        start0, end0 = timescale.picker_defaults(spec_dict)
+        help_text = ("Explicit dates always win: the suggestion only fills "
+                     "these in — you can edit them freely afterwards, and "
+                     "the Run button uses whatever they hold.")
+        col1, col2 = st.columns(2)
+        col1.date_input("Start date", value=start0,
+                        key=timescale.START_KEY, help=help_text)
+        col2.date_input("End date", value=end0,
+                        key=timescale.END_KEY, help=help_text)
+        if st.button("Suggest window", key="timescale_suggest",
+                     on_click=_apply_timescale_suggestion, args=(statuses,),
+                     help="Ask the survey-timescales engine for the right "
+                          "window for this variable + region. Overwrites "
+                          "the two pickers above — you can edit them "
+                          "afterwards."):
+            pass  # the on_click callback did the work before this rerun
+        error = st.session_state.get(timescale.ERROR_KEY)
+        if error:
+            kind, message = error
+            if kind == "warning":
+                st.warning(message)
+            else:
+                st.error(message)
+        suggestion = st.session_state.get(timescale.SUGGESTION_KEY)
+        if suggestion:
+            st.success(f"Suggested window applied: {suggestion['start']} → "
+                       f"{suggestion['end']}.")
+            st.caption(f"**{suggestion['mode']}** — {suggestion['reason']}")
+            st.caption("Edit the dates above freely — your edits are what "
+                       "the Run button uses.")
+
+
 def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     st.subheader("7 · Run the pipeline")
     spec_dict: Optional[Dict[str, Any]] = st.session_state.get("spec_dict")
@@ -1162,6 +1298,7 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     _refine_section(statuses)
     _derived_section(statuses)
     _cache_section(statuses)
+    _timescale_section(statuses)
 
     if not st.button("Run — fetch, render, encode", type="primary"):
         # Show a previous result if the session already ran.
@@ -1174,7 +1311,17 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
         st.error(str(exc))
         return
 
-    spec = wired.VizSpec.from_dict(spec_dict)
+    # The Time window pickers are the user's explicit dates: when they
+    # were rendered they win over whatever the spec carried (which is
+    # what they default to, so this is a no-op unless edited).
+    try:
+        run_dict = timescale.override_with_pickers(
+            spec_dict, st.session_state,
+            enabled=_timescale_enabled(statuses))
+    except ValueError as exc:
+        st.warning(str(exc))
+        return
+    spec = wired.VizSpec.from_dict(run_dict)
     out_dir = tempfile.mkdtemp(prefix="reel-studio-")
     progress_bar = st.progress(0.0, text="Starting…")
     status_box = st.status("Running pipeline…", expanded=False)
@@ -1222,7 +1369,7 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
         "video_path": result.video_path,
         "sidecar_path": result.sidecar_path,
         "provenance": result.provenance,
-        "spec_dict": spec_dict,
+        "spec_dict": run_dict,
         "n_frames": result.n_frames,
         "manifest_path": result.manifest_path,
         "platform": result.platform,

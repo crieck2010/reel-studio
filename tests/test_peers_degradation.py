@@ -17,18 +17,99 @@ from studio import peers, pipeline
 
 # --- load_peers ---------------------------------------------------------------
 
-def test_load_peers_returns_nine_statuses():
+def test_load_peers_returns_all_statuses():
     statuses = peers.load_peers()
     assert set(statuses) == {"survey-viz", "survey-currents",
                              "survey-animate", "survey-layout",
                              "survey-style", "survey-schedule",
                              "survey-cache", "survey-derive",
-                             "survey-publish"}
+                             "survey-publish", "survey-timescales"}
     for repo, status in statuses.items():
         assert isinstance(status, peers.PeerStatus)
         assert status.repo == repo
         assert status.pip_command.startswith(
             "pip install git+https://github.com/crieck2010/")
+
+
+def test_timescales_peer_spec():
+    spec = peers.PEER_SPECS["survey-timescales"]
+    assert spec["module"] == "timescales"
+    assert spec["pip"] == ("pip install "
+                           "git+https://github.com/crieck2010/survey-timescales.git")
+    assert "suggest_window" in spec["needed_for"]
+
+
+def _stub_wire_statuses():
+    """Statuses whose first three peers are importable stubs, so
+    wire_peers() can run headless for the optional-peer probes."""
+    viz = types.ModuleType("viz")
+    viz.parse_description = lambda *a, **k: None
+    viz.UnparseableDescription = type("UnparseableDescription",
+                                      (Exception,), {})
+    viz.VizSpec = type("VizSpec", (), {})
+    viz.is_fetchable = lambda key: True
+    viz.get_region = lambda key: None
+    viz.render_viz = lambda *a, **k: None
+    currents = types.ModuleType("currents")
+    glsea = types.ModuleType("currents.glsea")
+    glsea.fetch_glsea_sst = lambda *a, **k: None
+    glsea.fetch_glsea_lake_averages = lambda *a, **k: None
+    (glsea.GLSEA_LON_MIN, glsea.GLSEA_LAT_MIN,
+     glsea.GLSEA_LON_MAX, glsea.GLSEA_LAT_MAX) = (-95.0, 41.0, -76.0, 49.0)
+    animate = types.ModuleType("animate")
+    animate.render_video = lambda *a, **k: None
+    return {
+        "survey-viz": peers.PeerStatus(
+            repo="survey-viz", module_name="viz", module=viz,
+            pip_command="p", needed_for="x"),
+        "survey-currents": peers.PeerStatus(
+            repo="survey-currents", module_name="currents",
+            module=currents, pip_command="p", needed_for="x"),
+        "survey-animate": peers.PeerStatus(
+            repo="survey-animate", module_name="animate",
+            module=animate, pip_command="p", needed_for="x"),
+        "survey-timescales": peers.PeerStatus(
+            repo="survey-timescales", module_name="timescales",
+            module=None, pip_command="p", needed_for="x"),
+    }, {"viz": viz, "currents": currents,
+        "currents.glsea": glsea, "animate": animate}
+
+
+def _no_timescales_import(monkeypatch):
+    """Make 'timescales' unimportable; everything else imports normally."""
+    import importlib as _il
+    real_import = _il.import_module
+
+    def fake_import(name, *args, **kwargs):
+        if name == "timescales":
+            raise ImportError("No module named 'timescales'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(_il, "import_module", fake_import)
+
+
+def test_wire_peers_exposes_timescales_when_installed(monkeypatch):
+    statuses, modules = _stub_wire_statuses()
+    fake_ts = types.ModuleType("timescales")
+    fake_ts.suggest_window = lambda *a, **k: None
+    statuses["survey-timescales"].module = fake_ts
+    for name, mod in modules.items():
+        monkeypatch.setitem(sys.modules, name, mod)
+    monkeypatch.setitem(sys.modules, "timescales", fake_ts)
+    wired = peers.wire_peers(statuses)
+    assert wired.suggest_window is fake_ts.suggest_window
+    assert wired.timescales_pip.startswith("pip install git+")
+
+
+def test_wire_peers_timescales_missing_is_none(monkeypatch):
+    statuses, modules = _stub_wire_statuses()
+    for name, mod in modules.items():
+        monkeypatch.setitem(sys.modules, name, mod)
+    monkeypatch.delitem(sys.modules, "timescales", raising=False)
+    _no_timescales_import(monkeypatch)
+    wired = peers.wire_peers(statuses)
+    assert wired.suggest_window is None
+    assert wired.timescales_pip.startswith("pip install git+")
 
 
 def test_missing_peer_error_names_pip_command():
