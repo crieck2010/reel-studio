@@ -1431,6 +1431,11 @@ def run_pipeline(
     derived: Optional[Dict[str, Any]] = None,
     title_card: bool = True,
     min_duration_s: float = 0.0,
+    aesthetic_preset: Optional[str] = None,
+    rotation: Optional[Any] = None,
+    watermark: Optional[str] = None,
+    subtitle: Optional[str] = None,
+    encoding_line: bool = True,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1495,6 +1500,20 @@ def run_pipeline(
             aesthetics came from (e.g. ``"midnight-ocean"``), or None
             for hand-tuned aesthetics. Recorded in the reel provenance
             only — the styled values already live in ``spec``.
+        aesthetic_preset: mapped.earth aesthetic preset —
+            ``"dark_flow"`` / ``"dark_glow"`` / ``"paper_prism"`` — or
+            None (default) for the legacy renderer. Passed as
+            ``render_viz(preset=...)`` (survey-viz >= 0.22.0); part of
+            the frame-batch fingerprint since it changes the pixels.
+        rotation: frame rotation for the preset path — ``"auto"`` for
+            the optimal rotation of the region bbox, or degrees
+            counter-clockwise. None (default) renders north-up.
+        watermark: brand handle burned into the preset furniture
+            (None = off, the default).
+        subtitle: explicit editorial subtitle for the preset title
+            block (None = the auto time-window label).
+        encoding_line: draw the preset's honesty line
+            (e.g. "BRIGHTNESS = SPEED"). Default True.
         cache: optional render cache (a ``cachex.Cache`` from the
             survey-cache peer, or any duck-typed object with
             ``put_bytes``/``put_file``/``get_bytes``/``tag``/
@@ -1581,6 +1600,28 @@ def run_pipeline(
                 "survey-viz", "story captions (needs >= 0.17.0)",
                 _VIZ_UPGRADE)
         render_viz_kwargs["story_captions"] = True
+
+    # mapped.earth aesthetic presets (survey-viz >= 0.22.0): only when
+    # requested, so older peers keep working untouched. Everything
+    # lands in render_viz_kwargs, which the frame-batch fingerprint
+    # already covers — preset changes invalidate the cache correctly.
+    if (aesthetic_preset is not None or rotation is not None
+            or watermark is not None or subtitle is not None
+            or encoding_line is not True):
+        if not _supports_kw(peers.render_viz, "preset"):
+            raise PeerTooOldError(
+                "survey-viz", "aesthetic presets (needs >= 0.22.0)",
+                _VIZ_UPGRADE)
+        if aesthetic_preset is not None:
+            render_viz_kwargs["preset"] = aesthetic_preset
+        if rotation is not None:
+            render_viz_kwargs["rotation"] = rotation
+        if watermark is not None:
+            render_viz_kwargs["watermark"] = watermark
+        if subtitle is not None:
+            render_viz_kwargs["subtitle"] = subtitle
+        if encoding_line is not True:
+            render_viz_kwargs["encoding_line"] = False
 
     # Platform canvas (survey-layout + survey-viz >= 0.18.0): only when
     # a non-legacy platform is requested, so older peers keep working

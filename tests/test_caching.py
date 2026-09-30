@@ -60,6 +60,27 @@ def test_frame_batch_key_sensitive_to_data_bytes():
     assert _batch_key(render_field=field) != base
 
 
+def test_frame_batch_key_sensitive_to_aesthetic_preset():
+    # The preset/rotation/watermark/subtitle ride in render_viz_kwargs,
+    # so they invalidate the frame cache like any other render input.
+    base = _batch_key()
+    assert _batch_key(
+        render_viz_kwargs={"preset": "dark_glow"}) != base
+    assert _batch_key(
+        render_viz_kwargs={"preset": "dark_glow",
+                           "rotation": "auto"}) != _batch_key(
+        render_viz_kwargs={"preset": "dark_glow"})
+    assert _batch_key(
+        render_viz_kwargs={"preset": "paper_prism",
+                           "watermark": "handle"}) != base
+    assert _batch_key(
+        render_viz_kwargs={"preset": "paper_prism",
+                           "subtitle": "Custom"}) != base
+    assert _batch_key(
+        render_viz_kwargs={"preset": "dark_flow",
+                           "encoding_line": False}) != base
+
+
 def test_frame_batch_key_ignores_array_identity():
     # Two distinct arrays with identical bytes key identically.
     assert _batch_key() == _batch_key(render_field=_field())

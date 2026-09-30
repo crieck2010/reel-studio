@@ -76,6 +76,20 @@ Style the reel before it runs:
   mean") and significant trends, describing only what the reel shows.
   Needs survey-viz ≥ 0.17.0; categorical products keep their fixed
   scientific encodings and skip captions honestly.
+* **mapped.earth aesthetic preset** (needs survey-viz ≥ 0.22.0) —
+  render through the survey-aesthetics engine instead of the legacy
+  renderer: *Dark flow* (LIC streaks for currents/wind),
+  *Dark glow* (event glow for earthquakes/storm-tracks), *Paper prism*
+  (3D extrusion for gridded variables). Chrome-free frames, editorial
+  typography, custom legends, fixed reel-wide scales. Sub-controls,
+  every one user-overridable: **Frame rotation** (Off / Auto — optimal
+  for the region bbox — / Manual degrees; the north arrow rotates with
+  the map), **Subtitle** (empty = the automatic time-window label),
+  **Watermark** (brand handle, off by default), and the **encoding
+  honesty line** toggle (default on). Incompatible variable/preset
+  choices warn in the UI and fail fast at run time; presets use their
+  own layout grammar, so platform safe-zone canvases do not apply (the
+  app warns). The preset is part of the frame-batch fingerprint.
 
 Press **Apply preset** to fill the controls with a preset's values
 (the result step then records the preset name in the provenance);

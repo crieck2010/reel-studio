@@ -70,6 +70,12 @@ class _StubStreamlit:
         if disabled:
             return options[index]
         return self._val(label, options[index])
+    def radio(self, label, options, index=0, key=None, help=None,
+              horizontal=False):
+        return self._val(label, options[index])
+    def slider(self, label, min_value=None, max_value=None, value=None,
+               key=None, help=None):
+        return self._val(label, value)
     def checkbox(self, label, value=False, key=None, help=None):
         return self._val(label, value)
     def button(self, label, type="secondary", help=None, key=None):
@@ -212,3 +218,94 @@ def test_old_peer_degrades_gracefully(app_with_stub):
     assert stub.session_state["cmap"] is None
     assert any(isinstance(c, tuple) and c[0] == "info" and
                "≥ 0.15.0" in c[1] for c in stub.calls)
+
+
+# ---------------------------------------------------------------------------
+# mapped.earth preset section (v0.15.0)
+# ---------------------------------------------------------------------------
+
+def _viz_022():
+    return types.SimpleNamespace(
+        __version__="0.22.0",
+        CURATED_CMAPS=["viridis"],
+        VizSpec=_NewVizSpec,
+        AESTHETIC_PRESETS=("dark_flow", "dark_glow", "paper_prism"),
+        PRESET_VARIABLES={"dark_flow": ("currents", "wind"),
+                          "dark_glow": ("earthquakes", "storm-tracks"),
+                          "paper_prism": None},
+    )
+
+
+def test_preset_section_new_peer(app_with_stub):
+    script = {
+        "Aesthetic preset": "dark_glow",
+        "Frame rotation": "Auto",
+        "Subtitle (preset title block)": "My window",
+        "Watermark": True,
+        "Brand handle": "my_handle",
+        "Show the encoding honesty line": False,
+        "Apply aesthetics": False,
+    }
+    app_mod, stub = app_with_stub(script)
+    stub.session_state["spec_dict"] = _spec_dict(variable="earthquakes")
+    app_mod._aesthetics_step(_statuses(_viz_022()))
+    assert stub.session_state["aesthetic_preset"] == "dark_glow"
+    assert stub.session_state["aes_rotation"] == "auto"
+    assert stub.session_state["aes_subtitle"] == "My window"
+    assert stub.session_state["watermark"] == "my_handle"
+    assert stub.session_state["aes_encoding_line"] is False
+
+
+def test_preset_section_manual_rotation(app_with_stub):
+    script = {
+        "Aesthetic preset": "paper_prism",
+        "Frame rotation": "Manual degrees",
+        "Rotation (degrees counter-clockwise)": 33.0,
+        "Apply aesthetics": False,
+    }
+    app_mod, stub = app_with_stub(script)
+    stub.session_state["spec_dict"] = _spec_dict(variable="tp")
+    app_mod._aesthetics_step(_statuses(_viz_022()))
+    assert stub.session_state["aes_rotation"] == 33.0
+
+
+def test_preset_section_old_peer_degrades(app_with_stub):
+    viz = types.SimpleNamespace(__version__="0.21.0",
+                                CURATED_CMAPS=["viridis"],
+                                VizSpec=_NewVizSpec)
+    app_mod, stub = app_with_stub({"Apply aesthetics": False})
+    stub.session_state["spec_dict"] = _spec_dict()
+    app_mod._aesthetics_step(_statuses(viz))  # must not raise
+    assert stub.session_state["aesthetic_preset"] is None
+    assert stub.session_state["aes_rotation"] is None
+    assert stub.session_state["watermark"] is None
+    assert any(isinstance(c, tuple) and c[0] == "info" and
+               "0.22.0" in c[1] for c in stub.calls)
+
+
+def test_preset_incompatible_variable_warns(app_with_stub):
+    script = {"Aesthetic preset": "dark_flow", "Apply aesthetics": False}
+    app_mod, stub = app_with_stub(script)
+    stub.session_state["spec_dict"] = _spec_dict(variable="sst")
+    app_mod._aesthetics_step(_statuses(_viz_022()))
+    assert any(isinstance(c, tuple) and c[0] == "warning" and
+               "dark_flow" in c[1] for c in stub.calls)
+
+
+def test_preset_platform_conflict_warns(app_with_stub):
+    script = {"Aesthetic preset": "dark_glow", "Apply aesthetics": False}
+    app_mod, stub = app_with_stub(script)
+    stub.session_state["spec_dict"] = _spec_dict(variable="earthquakes")
+    stub.session_state["platform"] = "tiktok"
+    app_mod._aesthetics_step(_statuses(_viz_022()))
+    assert any(isinstance(c, tuple) and c[0] == "warning" and
+               "safe-zone" in c[1] for c in stub.calls)
+
+
+def test_watermark_without_handle_stays_off(app_with_stub):
+    script = {"Watermark": True, "Brand handle": "   ",
+              "Apply aesthetics": False}
+    app_mod, stub = app_with_stub(script)
+    stub.session_state["spec_dict"] = _spec_dict()
+    app_mod._aesthetics_step(_statuses(_viz_022()))
+    assert stub.session_state["watermark"] is None

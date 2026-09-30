@@ -2,6 +2,36 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.15.0] - 2026-09-30
+
+### Added
+- **mapped.earth aesthetic presets** (survey-viz >= 0.22.0, eleventh
+  peer surface). Step 3 (Aesthetics) gains a preset picker —
+  *Dark flow* (LIC current/wind streaks on black), *Dark glow* (event
+  glow with bloom on black), *Paper prism* (3D extrusion on warm
+  paper) — plus full manual control over every auto choice, per the
+  standing maximum-control rule:
+  - **Frame rotation**: Off / Auto (optimal for the region bbox —
+    elongated regions like Lake Ontario rotate ~90° to maximize zoom;
+    the north arrow rotates with the map) / Manual degrees slider.
+  - **Subtitle** text field (empty = the automatic time-window label).
+  - **Watermark** checkbox + brand-handle field (off by default —
+    watermarking stays the user's call).
+  - **Encoding honesty line** toggle (default on).
+  - Variable/preset compatibility warnings and a platform-canvas
+    conflict warning, all fail-fast with plain-words reasons at run
+    time.
+- `run_pipeline()` accepts `aesthetic_preset`, `rotation`,
+  `watermark`, `subtitle`, and `encoding_line`; they ride in
+  `render_viz_kwargs`, so the survey-cache frame-batch fingerprint
+  already covers them (preset changes invalidate the cache — proven
+  by new fingerprint tests). Older survey-viz peers raise
+  `PeerTooOldError` with the upgrade command instead of a traceback.
+
+### Notes
+- Windows upgrade path is unchanged: double-click
+  `Update reel-studio.bat`, then relaunch from the desktop icon.
+
 ## [0.14.0] - 2026-09-30
 
 ### Added

@@ -70,6 +70,12 @@ class _StubStreamlit:
         if disabled:
             return options[index]
         return self._val(label, options[index])
+    def radio(self, label, options, index=0, key=None, help=None,
+              horizontal=False):
+        return self._val(label, options[index])
+    def slider(self, label, min_value=None, max_value=None, value=None,
+               key=None, help=None):
+        return self._val(label, value)
     def checkbox(self, label, value=False, key=None, help=None):
         return self._val(label, value)
     def columns(self, spec):

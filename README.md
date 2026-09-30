@@ -114,6 +114,10 @@ Your browser opens to `http://localhost:8501` (paste it manually if it doesn't).
 3. **Aesthetics** — pick Dark/Light style, edit the title, add an optional footer
    caption, toggle the basemap underlay, and choose a colormap (continuous data maps
    only) — or paste a reel URL / upload a screenshot to copy its color mood.
+   **mapped.earth presets** — Dark flow (LIC current/wind streaks), Dark glow
+   (event glow with bloom), Paper prism (3D extrusion) — with frame rotation
+   (auto/manual), subtitle, watermark, and honesty-line controls (needs
+   survey-viz ≥ 0.22.0).
    Press **Apply aesthetics** to store the spec that will run.
 4. **Cinematic motion & audio** — set zoom mode/speed, pan direction/speed, and
    crossfade smoothing; optionally attach your own audio file to mux under the reel
@@ -244,6 +248,14 @@ The app works **fully** without the key — it is never required. See
   URL or upload a screenshot to copy its color mood (dark/light style +
   colormap suggestion). **Data-driven story captions** — burn
   peak/trend captions onto the frames (needs survey-viz ≥ 0.17.0).
+  **mapped.earth presets** (needs survey-viz ≥ 0.22.0) — Dark flow, Dark
+  glow, Paper prism: chrome-free frames, editorial typography, custom
+  legends, fixed reel-wide scales. Rotation (Off/Auto/Manual degrees),
+  subtitle (empty = auto time-window label), watermark (off by default),
+  and honesty-line toggle are all user-overridable; incompatible
+  variable/preset and preset/platform-canvas combinations warn or fail
+  fast with plain-words reasons. The preset is part of the render
+  fingerprint, so changing it invalidates the frame cache.
 * **Step 4 — Cinematic motion & audio** — enable camera motion and set
   zoom mode/speed, pan direction/speed, and crossfade smoothing; attach
   your own audio file to mux under the reel (needs survey-animate ≥

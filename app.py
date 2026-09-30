@@ -41,7 +41,7 @@ except ImportError:  # headless / tests: import still works, main() won't run
 from studio import batch, caching, llm_assist, peers, pipeline, scheduler, styling, timescale
 
 APP_TITLE = "reel-studio"
-APP_VERSION = "0.14.0"
+APP_VERSION = "0.15.0"
 PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate",
               "survey-layout", "survey-style", "survey-schedule",
               "survey-publish")
@@ -51,6 +51,8 @@ MIN_VIZ_STORY = (0, 17, 0)      # story captions + motion refine intents
 MIN_ANIMATE_MOTION = (0, 2, 0)   # cinematic motion + audio muxing
 #: Minimum peer versions for the v0.5.0 platform layouts.
 MIN_VIZ_CANVAS = (0, 18, 0)     # render_viz canvas= (platform canvases)
+#: Minimum peer version for the v0.15.0 mapped.earth aesthetic presets.
+MIN_VIZ_PRESET = (0, 22, 0)     # render_viz preset=/rotation=/watermark=
 
 #: Camera-motion widget options (values are the MotionSpec vocabularies).
 ZOOM_MODES = ("off", "in", "out")
@@ -498,6 +500,10 @@ def _aesthetics_step(statuses: Dict[str, peers.PeerStatus]) -> None:
         )
         st.session_state["story_captions"] = story_captions
 
+    st.divider()
+    st.markdown("**mapped.earth aesthetic preset**")
+    _aesthetic_preset_section(status, spec_dict, rev)
+
     if not st.button(
         "Apply aesthetics",
         type="secondary",
@@ -526,6 +532,136 @@ def _aesthetics_step(statuses: Dict[str, peers.PeerStatus]) -> None:
     st.session_state["style_preset"] = None  # hand-tuned from here on
     st.success("Aesthetics applied — the spec below is what will run.")
     st.json(new_dict)
+
+
+def _aesthetic_preset_section(status, spec_dict: Dict[str, Any], rev: int) -> None:
+    """mapped.earth preset picker — inside the Aesthetics step.
+
+    Needs survey-viz >= 0.22.0; older peers get the upgrade hint and
+    the whole section stays inert (session state keeps the legacy
+    defaults). Every auto choice is user-overridable: preset, rotation
+    (auto/manual/off), subtitle, watermark, and the honesty line.
+    """
+    viz = status.module if status.installed else None
+    if not _version_ok(status, MIN_VIZ_PRESET):
+        st.info(_upgrade_hint(status, "0.22.0",
+                              "mapped.earth aesthetic presets") +
+                " The reel renders with the legacy look in the meantime.")
+        st.session_state["aesthetic_preset"] = None
+        st.session_state["aes_rotation"] = None
+        st.session_state["watermark"] = None
+        st.session_state["aes_subtitle"] = None
+        st.session_state["aes_encoding_line"] = True
+        return
+
+    presets = list(getattr(viz, "AESTHETIC_PRESETS",
+                           ("dark_flow", "dark_glow", "paper_prism")))
+    var_map = getattr(viz, "PRESET_VARIABLES", {}) or {}
+    variable = spec_dict.get("variable")
+
+    labels = {
+        "dark_flow": "Dark flow — LIC current/wind streaks on black",
+        "dark_glow": "Dark glow — event glow with bloom on black",
+        "paper_prism": "Paper prism — 3D extrusion on warm paper",
+    }
+    options = [None] + presets
+    current = st.session_state.get("aesthetic_preset")
+    choice = st.selectbox(
+        "Aesthetic preset",
+        options=options,
+        format_func=lambda v: ("Off (legacy renderer)" if v is None
+                               else labels.get(v, v)),
+        index=options.index(current) if current in options else 0,
+        key=f"aes_preset_{rev}",
+        help="Renders through the survey-aesthetics engine: chrome-free "
+             "frames, editorial typography, custom legends, fixed "
+             "reel-wide scales. Off keeps the current renderer.",
+    )
+    st.session_state["aesthetic_preset"] = choice
+
+    if choice is not None:
+        allowed = var_map.get(choice)
+        if allowed is not None and variable not in allowed:
+            st.warning(
+                f"`{choice}` renders {', '.join(allowed)} — "
+                f"`{variable}` has no compatible data and the run will "
+                f"fail fast with the reason. Pick another preset or turn "
+                f"it off.")
+        elif choice == "paper_prism" and variable in (
+                "storm-tracks", "streamflow", "earthquakes"):
+            st.warning(
+                f"`paper_prism` needs a gridded variable — `{variable}` "
+                f"is event/track data and the run will fail fast. Pick "
+                f"another preset or turn it off.")
+        if (st.session_state.get("platform")
+                not in (None, "legacy", "")):
+            st.warning(
+                "Aesthetic presets use their own layout grammar — "
+                "platform safe-zone canvases do not apply. Set Platform "
+                "back to Legacy to run with a preset.")
+
+    # Rotation: off / auto / manual degrees.
+    rot_mode = st.radio(
+        "Frame rotation",
+        options=["Off", "Auto", "Manual degrees"],
+        index={"Off": 0, "Auto": 1, "Manual": 2}.get(
+            st.session_state.get("aes_rot_mode"), 0),
+        key=f"aes_rotmode_{rev}",
+        help="Auto rotates elongated regions (e.g. Lake Ontario ~90°) "
+             "to maximize zoom; the north arrow rotates with the map.",
+        horizontal=True,
+    )
+    st.session_state["aes_rot_mode"] = rot_mode
+    if rot_mode == "Manual degrees":
+        deg = st.slider("Rotation (degrees counter-clockwise)",
+                        -90.0, 90.0,
+                        float(st.session_state.get("aes_rot_deg") or 0.0),
+                        key=f"aes_rotdeg_{rev}")
+        st.session_state["aes_rot_deg"] = deg
+        st.session_state["aes_rotation"] = deg
+    elif rot_mode == "Auto":
+        st.session_state["aes_rotation"] = "auto"
+    else:
+        st.session_state["aes_rotation"] = None
+
+    subtitle = st.text_input(
+        "Subtitle (preset title block)",
+        value=st.session_state.get("aes_subtitle") or "",
+        key=f"aes_subtitle_{rev}",
+        help="Burned under the serif title. Empty = the automatic "
+             "time-window label (e.g. “16–23 September 2026”).",
+    )
+    st.session_state["aes_subtitle"] = subtitle.strip() or None
+
+    wm_on = st.checkbox(
+        "Watermark",
+        value=bool(st.session_state.get("watermark")),
+        key=f"aes_wm_on_{rev}",
+        help="Burns your brand handle + © + data-source line into the "
+             "preset furniture. Off by default — your call.",
+    )
+    if wm_on:
+        wm_text = st.text_input(
+            "Brand handle",
+            value=(st.session_state.get("watermark") or ""),
+            key=f"aes_wm_text_{rev}",
+            help="Shown bottom-right, e.g. your channel handle.",
+        ).strip()
+        st.session_state["watermark"] = wm_text or None
+        if not wm_text:
+            st.info("Type a brand handle — the watermark stays off "
+                    "until you do.")
+    else:
+        st.session_state["watermark"] = None
+
+    enc = st.checkbox(
+        "Show the encoding honesty line",
+        value=bool(st.session_state.get("aes_encoding_line", True)),
+        key=f"aes_enc_{rev}",
+        help="The preset's statement of what is encoded, e.g. "
+             "“BRIGHTNESS = SPEED”.",
+    )
+    st.session_state["aes_encoding_line"] = enc
 
 
 def _copy_look_section(viz, spec_dict: Dict[str, Any], categorical: bool,
@@ -1340,6 +1476,12 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
             story_captions=bool(st.session_state.get("story_captions")),
             platform=st.session_state.get("platform") or "legacy",
             style_preset=st.session_state.get("style_preset"),
+            aesthetic_preset=st.session_state.get("aesthetic_preset"),
+            rotation=st.session_state.get("aes_rotation"),
+            watermark=st.session_state.get("watermark"),
+            subtitle=st.session_state.get("aes_subtitle"),
+            encoding_line=bool(
+                st.session_state.get("aes_encoding_line", True)),
             derived=_run_derived())
     except (pipeline.UnfetchableRegionError,
             pipeline.UnsupportedVariableError) as exc:
