@@ -16,7 +16,7 @@ inspectable reason it was chosen. No LLM is required at runtime.
 
 | Repo | Role | Version tested |
 |---|---|---|
-| [survey-currents](https://github.com/crieck2010/survey-currents) | Data-fetch engines for all 13 sources | v0.15.0 |
+| [survey-currents](https://github.com/crieck2010/survey-currents) | Data-fetch engines for all 14 sources | v0.16.0 |
 | [survey-viz](https://github.com/crieck2010/survey-viz) | Description parser + reel frame renderer | v0.24.0 |
 | [survey-animate](https://github.com/crieck2010/survey-animate) | Frames → MP4 encoder (resolves ffmpeg) | v0.2.0 |
 | [survey-layout](https://github.com/crieck2010/survey-layout) | Platform aspect ratios + safe-zone canvases (optional) | v0.1.0 |
@@ -40,6 +40,7 @@ marked **keyless** work with no account; a few optional sources need free accoun
 |---|---|---|
 | Sea-surface temperature (Great Lakes / global) | NOAA GLSEA; NOAA OISST v2.1; NASA JPL MUR v4.1 | keyless |
 | Wind, pressure, air temperature, precipitation (ERA5) | Copernicus ERA5 (CDS) | free CDS account |
+| 10-m winds + 2-m temperature, global, ~10-day rolling window | NOAA GFS 0.25° (NOMADS GRIB filter) | keyless |
 | Ocean currents | NASA PODAAC OSCAR v2.0; CMEMS Global Ocean Physics | OSCAR keyless |
 | Active fires | NASA FIRMS | keyless (API key optional) |
 | Sea-ice concentration | NSIDC Sea Ice Index G02135 v4.0 | keyless |
@@ -304,7 +305,7 @@ The app works **fully** without the key — it is never required. See
 * [docs/APP.md](docs/APP.md) — user guide (the 9 steps, LLM assist, troubleshooting)
 * [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the code is organized
 * [docs/INTEROP.md](docs/INTEROP.md) — peer contracts + the interop quirks discovered
-  during the 13-source build program (read before extending)
+  during the 14-source build program (read before extending)
 * [docs/DERIVED.md](docs/DERIVED.md) — derived climatological anomaly
   products: the science, the controls, eligibility rules, and honest limits
 * [docs/PUBLISHING.md](docs/PUBLISHING.md) — the Publish step: per-platform

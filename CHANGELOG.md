@@ -2,6 +2,35 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.18.0] - 2026-10-01
+
+### Added
+- **`source="gfs-wind"` routing** (survey-viz >= 0.25.0,
+  survey-currents >= 0.16.0): NOAA GFS 10-m winds via the keyless
+  NOMADS GRIB filter — fetchable in any region, daily 00z f000
+  analysis, 0.25° grid, with the 2-m air temperature coloring the
+  strands (the warming.watch convention). Only serves
+  `variable="wind"`; anything else is an honest `bad_variable` plan.
+  `wire_peers` exposes `fetch_gfs_wind` (None when the peer is older
+  than 0.16.0 — the pipeline then raises the honest upgrade message).
+  Derived climatology products are honestly ineligible for this
+  source: NOMADS keeps only ~10 days of GFS, so a multi-year baseline
+  is impossible.
+- The returned `GfsWindField.to_dict()` (grids `u10`/`v10` + °F
+  `air_temperature`) is handed straight to `render_viz`, so the
+  survey-viz `dark_strands` preset renders GFS winds with zero
+  renderer changes.
+- 11 new tests in `tests/test_pipeline_gfswind.py`, including a real
+  survey-viz `dark_strands` render of a synthetic GFS field proving
+  real PNG frames (not just plumbing).
+- `studio.__version__` bumped to 0.18.0 (was stale at 0.10.0 since
+  v0.1.0 — now maintained per release).
+
+### Changed
+- README's peer-versions table pins survey-currents v0.16.0; the
+  supported-sources table and docs/INTEROP.md gain the GFS wind
+  contract (14 sources total).
+
 ## [0.17.0] - 2026-10-01
 
 ### Added

@@ -374,6 +374,30 @@ four lakes' bboxes already fit the grid.
 * Provenance: `RunResult.source == "era5"`, field provenance under
   `provenance["fetch"]["era5"]` (SST adapters keep `"sst"`).
 
+## GFS 10-m wind contract (survey-viz 0.25.0 / survey-currents 0.16.0)
+
+* `wire_peers` exposes `fetch_gfs_wind` (None when survey-currents <
+  0.16.0 — the pipeline then raises the honest upgrade message).
+* `run_pipeline` calls `fetch_gfs_wind(tuple(spec.bbox), spec.start,
+  spec.end, stride_days=...)` — the keyless NOMADS GRIB filter, one f000
+  analysis per sampled day, 0.25° grid. The grid is global, so no
+  region-key check applies (like `era5`, unlike the Great-Lakes
+  sources).
+* Only serves `variable == "wind"`: `plan_fetch` returns a
+  `bad_variable` plan for anything else (SST goes through
+  glsea/oisst/mur; the other atmosphere variables go through `era5`).
+* The fetch returns a `GfsWindField` whose `.to_dict()` carries
+  `grids["u10"]`/`grids["v10"]` plus `air_temperature` (°F) and
+  `temperature_unit == "°F"` — exactly what survey-viz's
+  `dark_flow`/`dark_strands` wind path keys off. The pipeline passes
+  this dict straight to `render_viz`; `series=None` (no lake-average
+  equivalent — placeholder chart panel).
+* Derived products are honestly ineligible: `gfs-wind` is in
+  `_DERIVED_INELIGIBLE` because NOMADS keeps only ~10 days of the
+  0.25° GFS, so a multi-year climatology baseline is impossible.
+* Provenance: `RunResult.source == "gfs-wind"`, field provenance under
+  `provenance["fetch"]["gfs-wind"]`.
+
 ## Cinematic motion + audio contract (survey-animate 0.2.0)
 
 * `wire_peers` exposes `MotionSpec` (`None` on older peers).

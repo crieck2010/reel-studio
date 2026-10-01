@@ -36,7 +36,7 @@ PEER_SPECS: Dict[str, Dict[str, str]] = {
     "survey-currents": {
         "module": "currents",
         "pip": "pip install git+https://github.com/crieck2010/survey-currents.git",
-        "needed_for": "fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages), global OISST/MUR (fetch_oisst, fetch_mur), ERA5 atmosphere (fetch_era5), global currents (fetch_oscar, fetch_cmems_currents), NASA FIRMS active fires (fetch_firms), NSIDC sea-ice concentration (fetch_nsidc), GPM IMERG precipitation (fetch_imerg), NASA Black Marble night lights (fetch_blackmarble), NOAA IBTrACS storm tracks (fetch_ibtracs), CSR GRACE/GRACE-FO water storage (fetch_grace), USGS streamgages (fetch_usgs), NOAA CoastWatch ocean color (fetch_oceancolor), USGS earthquake catalog (fetch_earthquakes)",
+        "needed_for": "fetching: Great-Lakes GLSEA (fetch_glsea_sst, fetch_glsea_lake_averages), global OISST/MUR (fetch_oisst, fetch_mur), ERA5 atmosphere (fetch_era5), global currents (fetch_oscar, fetch_cmems_currents), NASA FIRMS active fires (fetch_firms), NSIDC sea-ice concentration (fetch_nsidc), GPM IMERG precipitation (fetch_imerg), NASA Black Marble night lights (fetch_blackmarble), NOAA IBTrACS storm tracks (fetch_ibtracs), CSR GRACE/GRACE-FO water storage (fetch_grace), USGS streamgages (fetch_usgs), NOAA CoastWatch ocean color (fetch_oceancolor), USGS earthquake catalog (fetch_earthquakes), NOAA GFS 10-m winds (fetch_gfs_wind, keyless)",
     },
     "survey-animate": {
         "module": "animate",
@@ -245,6 +245,10 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
         earthquakes = importlib.import_module("currents.earthquakes")
     except ImportError:
         earthquakes = None
+    try:
+        gfs_wind = importlib.import_module("currents.gfs_wind")
+    except ImportError:
+        gfs_wind = None
     # survey-derive is the optional eighth peer (climatological anomaly
     # products): None when it is missing, and the pipeline raises
     # PeerTooOldError with the install command only when a derived
@@ -289,6 +293,7 @@ def wire_peers(statuses: Dict[str, PeerStatus]) -> types.SimpleNamespace:
                           if oceancolor else None),
         fetch_earthquakes=(earthquakes.fetch_earthquakes
                            if earthquakes else None),
+        fetch_gfs_wind=(gfs_wind.fetch_gfs_wind if gfs_wind else None),
         # GLSEA grid bounds (lon_min, lat_min, lon_max, lat_max); the pipeline
         # clamps spec bboxes into this window before fetching, because the
         # lake-superior gazetteer bbox starts slightly west of the grid floor.

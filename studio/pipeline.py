@@ -139,6 +139,7 @@ SOURCE_LABELS = {
     "usgs": "USGS Water Services (NWIS)",
     "oceancolor": "NOAA CoastWatch Ocean Color",
     "comcat": "USGS Earthquake Catalog (ComCat)",
+    "gfs-wind": "NOAA GFS 10m winds (NOMADS), keyless",
 }
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
@@ -228,6 +229,8 @@ _DERIVED_INELIGIBLE = {
     "ibtracs": "IBTrACS carries storm tracks, not a gridded scalar field.",
     "usgs": "USGS carries streamgage records, not a gridded scalar field.",
     "comcat": "ComCat carries earthquake events, not a gridded scalar field.",
+    "gfs-wind": ("NOMADS keeps only ~10 days of the 0.25° GFS — a "
+                 "multi-year climatology baseline is impossible."),
 }
 
 
@@ -331,7 +334,9 @@ class FetchPlan:
     kind: str = "ok"
     #: which adapter the fetch uses:
     #: "glsea" | "oisst" | "mur" | "era5" | "oscar" | "cmems-currents" |
-    #: "firms" | "nsidc" | "imerg" | "blackmarble" ("ok" plans only)
+    #: "firms" | "nsidc" | "imerg" | "blackmarble" | "gebco" | "ibtracs" |
+    #: "grace" | "usgs" | "oceancolor" | "comcat" | "gfs-wind"
+    #: ("ok" plans only)
     source: str = ""
 
 
@@ -422,6 +427,38 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             region_key=region_key,
             variable=variable,
             source="era5",
+        )
+
+    # GFS 10-m winds (survey-currents >= 0.16.0): fetchable in ANY region —
+    # the 0.25° GFS grid is global, so no region-key check applies. Only
+    # serves the 'wind' variable: the adapter always fetches the 10-m
+    # wind + 2-m temperature pair (wind strands are colored by the 2-m
+    # air temperature, the warming.watch convention).
+    if source == "gfs-wind":
+        if variable != "wind":
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Source 'gfs-wind' only serves the 'wind' variable "
+                    f"(10-m winds colored by 2-m air temperature); got "
+                    f"variable '{variable}'. (SST goes through "
+                    "glsea/oisst/mur; the other atmosphere variables go "
+                    "through 'era5'.)"
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
+        return FetchPlan(
+            fetchable=True,
+            reason=(
+                f"Region '{region_key}' is fetchable via "
+                f"{SOURCE_LABELS['gfs-wind']} (variable 'wind', "
+                "source 'gfs-wind')."
+            ),
+            region_key=region_key,
+            variable=variable,
+            source="gfs-wind",
         )
 
     # Global currents (survey-viz >= 0.4.0): fetchable in ANY region
@@ -1869,6 +1906,44 @@ def run_pipeline(
             lambda s, e: _field_to_dict(
                 fetch_fn(variables, tuple(spec.bbox), s, e,
                          stride_hours=24 * base_stride)))
+    elif source == "gfs-wind":
+        # NOAA GFS 10-m winds (keyless NOMADS GRIB filter,
+        # survey-currents >= 0.16.0): fetch(bbox, start, end,
+        # stride_days=...) on the spec bbox directly — the 0.25° grid
+        # is global, nothing to clamp. series=None: there is no
+        # lake-average equivalent; render_viz shows a placeholder chart
+        # panel. render_dict is the field's to_dict() form, which
+        # carries grids["u10"]/grids["v10"] plus air_temperature (°F)
+        # for survey-viz's dark_flow/dark_strands wind path.
+        label = SOURCE_LABELS["gfs-wind"]
+        report(0.05, f"Fetching {label} 10-m wind grid…")
+        fetch_fn = getattr(peers, "fetch_gfs_wind", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                "Source 'gfs-wind' needs survey-currents>=0.16.0 with the "
+                "GFS wind adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        try:
+            field = fetch_fn(
+                tuple(spec.bbox), spec.start, spec.end,
+                stride_days=stride_days)
+        except Exception as exc:
+            raise RuntimeError(
+                f"GFS wind fetch failed ({type(exc).__name__}: {exc}). "
+                "Check the network connection, that cfgrib is installed "
+                "(pip install 'survey-currents[gfs]'), and that the "
+                "requested dates are within the last ~10 days — NOMADS "
+                "rolls older GFS cycles off (keyless: no credentials to "
+                "check)."
+            ) from exc
+        render_dict = (field.to_dict() if hasattr(field, "to_dict")
+                       else field)
+        series = None
+        fetch_key = "gfs-wind"
+        # No baseline refetch: NOMADS keeps only ~10 days of GFS, so a
+        # climatology baseline is impossible — the source is listed in
+        # _DERIVED_INELIGIBLE and derived requests refuse honestly.
     elif source in ("oscar", "cmems-currents"):
         # Global currents: fetch(bbox, start, end, stride_days=...) on the
         # spec bbox directly — the 0.25°/1/12° grids are global, nothing
