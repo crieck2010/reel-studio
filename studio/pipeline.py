@@ -1439,6 +1439,9 @@ def run_pipeline(
     place_labels: Any = None,
     max_labels: Optional[int] = None,
     min_population: Optional[int] = None,
+    basemap: Optional[str] = None,
+    strand_count: Optional[int] = None,
+    strand_linewidth: Optional[float] = None,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1504,10 +1507,12 @@ def run_pipeline(
             for hand-tuned aesthetics. Recorded in the reel provenance
             only — the styled values already live in ``spec``.
         aesthetic_preset: mapped.earth aesthetic preset —
-            ``"dark_flow"`` / ``"dark_glow"`` / ``"paper_prism"`` — or
-            None (default) for the legacy renderer. Passed as
-            ``render_viz(preset=...)`` (survey-viz >= 0.22.0); part of
-            the frame-batch fingerprint since it changes the pixels.
+            ``"dark_flow"`` / ``"dark_glow"`` / ``"paper_prism"`` /
+            ``"dark_strands"`` — or None (default) for the legacy
+            renderer. Passed as ``render_viz(preset=...)``
+            (survey-viz >= 0.22.0; ``dark_strands`` needs >= 0.24.0);
+            part of the frame-batch fingerprint since it changes the
+            pixels.
         rotation: frame rotation for the preset path — ``"auto"`` for
             the optimal rotation of the region bbox, or degrees
             counter-clockwise. None (default) renders north-up.
@@ -1533,6 +1538,25 @@ def run_pipeline(
         min_population: minimum place population for automatic place
             labels (survey-viz default 0). ``None`` (default) leaves
             the peer default.
+        basemap: basemap style for the preset path — ``"void_black"``
+            (pure black land), ``"no_basemap"`` (data only, geography
+            emerges from the mask), or ``"subtle_land"`` (faint land
+            fill). ``None`` (default) keeps the preset's bundled
+            default and passes nothing, so older peers keep working
+            untouched. Any explicit choice needs survey-viz >= 0.24.0,
+            otherwise raises :class:`PeerTooOldError` with the upgrade
+            command. Part of the frame-batch fingerprint since it
+            changes the pixels.
+        strand_count: particle count per frame for the ``dark_strands``
+            preset (survey-viz default 3000). ``None`` (default)
+            leaves the peer default and passes nothing. Needs
+            survey-viz >= 0.24.0 when set. Part of the frame-batch
+            fingerprint.
+        strand_linewidth: strand width in points for the
+            ``dark_strands`` preset (survey-viz default 1.4).
+            ``None`` (default) leaves the peer default and passes
+            nothing. Needs survey-viz >= 0.24.0 when set. Part of the
+            frame-batch fingerprint.
         cache: optional render cache (a ``cachex.Cache`` from the
             survey-cache peer, or any duck-typed object with
             ``put_bytes``/``put_file``/``get_bytes``/``tag``/
@@ -1658,6 +1682,25 @@ def run_pipeline(
             render_viz_kwargs["max_labels"] = max_labels
         if min_population is not None:
             render_viz_kwargs["min_population"] = min_population
+
+    # Basemap styles + strand controls (survey-viz >= 0.24.0): only when
+    # the user made an explicit choice, so older peers keep working
+    # untouched. Everything lands in render_viz_kwargs, which the
+    # frame-batch fingerprint already covers — style/strand changes
+    # invalidate the cache correctly.
+    if (basemap is not None or strand_count is not None
+            or strand_linewidth is not None):
+        if not _supports_kw(peers.render_viz, "basemap"):
+            raise PeerTooOldError(
+                "survey-viz",
+                "basemap styles and strand controls (needs >= 0.24.0)",
+                _VIZ_UPGRADE)
+        if basemap is not None:
+            render_viz_kwargs["basemap"] = basemap
+        if strand_count is not None:
+            render_viz_kwargs["strand_count"] = strand_count
+        if strand_linewidth is not None:
+            render_viz_kwargs["strand_linewidth"] = strand_linewidth
 
     # Platform canvas (survey-layout + survey-viz >= 0.18.0): only when
     # a non-legacy platform is requested, so older peers keep working

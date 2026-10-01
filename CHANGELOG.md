@@ -2,6 +2,34 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.17.0] - 2026-10-01
+
+### Added
+- **Basemap styles + strand controls** (survey-viz >= 0.24.0,
+  survey-aesthetics v0.2.0). Step 3 (Aesthetics) gains a **Basemap &
+  strands** group inside the preset section, every choice
+  user-overridable per the standing maximum-control rule:
+  - **Preset picker** gains **Dark strands** — advected particle
+    trails on black for currents/wind (the warming.watch look);
+    variable/preset mismatch warns in the UI and fails fast at run
+    time, same as the other presets.
+  - **Basemap style**: Preset default / **Void black** / **No
+    basemap** / **Subtle land** — how land is drawn under the data.
+  - **Strand controls** (shown for Dark strands): **Strand count**
+    slider (500–10000, default 3000) and **Strand line width**
+    slider (0.5–3.0 pt, default 1.4).
+  - Sliders at their defaults pass nothing — the survey-viz defaults
+    apply — so older peers keep working untouched and the choice stays
+    version-keyed in the cache fingerprint.
+- `run_pipeline()` accepts `basemap`, `strand_count`, and
+  `strand_linewidth`; explicit choices ride in `render_viz_kwargs`, so
+  the survey-cache frame-batch fingerprint already covers them
+  (style/strand changes invalidate the cache — proven by new
+  fingerprint tests). Older survey-viz peers raise `PeerTooOldError`
+  with the upgrade command instead of a traceback; defaults pass
+  nothing, so legacy runs are untouched. The new controls stay inert
+  with an upgrade hint on survey-viz < 0.24.0.
+
 ## [0.16.0] - 2026-09-30
 
 ### Added

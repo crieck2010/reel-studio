@@ -80,8 +80,10 @@ Style the reel before it runs:
   render through the survey-aesthetics engine instead of the legacy
   renderer: *Dark flow* (LIC streaks for currents/wind),
   *Dark glow* (event glow for earthquakes/storm-tracks), *Paper prism*
-  (3D extrusion for gridded variables). Chrome-free frames, editorial
-  typography, custom legends, fixed reel-wide scales. Sub-controls,
+  (3D extrusion for gridded variables), *Dark strands* (needs
+  survey-viz ≥ 0.24.0; advected particle trails for currents/wind, in
+  the warming.watch style). Chrome-free frames, editorial typography,
+  custom legends, fixed reel-wide scales. Sub-controls,
   every one user-overridable: **Frame rotation** (Off / Auto — optimal
   for the region bbox — / Manual degrees; the north arrow rotates with
   the map), **Subtitle** (empty = the automatic time-window label),
@@ -91,10 +93,17 @@ Style the reel before it runs:
   fetched once per reel; max-labels slider + min-population input) /
   **Custom** (place names, one per line, resolved via the gazetteer
   with city + region + country disambiguation so you pick the right
-  "Rochester"). Incompatible variable/preset
-  choices warn in the UI and fail fast at run time; presets use their
-  own layout grammar, so platform safe-zone canvases do not apply (the
-  app warns). The preset is part of the frame-batch fingerprint.
+  "Rochester"); **Basemap style** (needs survey-viz ≥ 0.24.0): Preset
+  default / **Void black** / **No basemap** / **Subtle land**;
+  **Strand controls** (needs survey-viz ≥ 0.24.0; shown for Dark
+  strands): **Strand count** slider (500–10000, default 3000) and
+  **Strand line width** slider (0.5–3.0 pt, default 1.4) — at the
+  defaults nothing is passed and the survey-viz defaults apply.
+  Incompatible variable/preset choices warn in the UI and fail fast at
+  run time; presets use their own layout grammar, so platform
+  safe-zone canvases do not apply (the app warns). The preset,
+  basemap style, and strand settings are part of the frame-batch
+  fingerprint.
 
 Press **Apply preset** to fill the controls with a preset's values
 (the result step then records the preset name in the provenance);

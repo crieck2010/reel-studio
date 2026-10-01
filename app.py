@@ -41,7 +41,7 @@ except ImportError:  # headless / tests: import still works, main() won't run
 from studio import batch, caching, llm_assist, peers, pipeline, scheduler, styling, timescale
 
 APP_TITLE = "reel-studio"
-APP_VERSION = "0.16.0"
+APP_VERSION = "0.17.0"
 PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate",
               "survey-layout", "survey-style", "survey-schedule",
               "survey-publish")
@@ -56,6 +56,10 @@ MIN_VIZ_PRESET = (0, 22, 0)     # render_viz preset=/rotation=/watermark=
 
 #: Minimum peer version for the v0.16.0 place labels.
 MIN_VIZ_LABELS = (0, 23, 0)     # render_viz place_labels=/max_labels=
+
+#: Minimum peer version for the v0.17.0 basemap styles + strand controls.
+MIN_VIZ_STRANDS = (0, 24, 0)    # render_viz basemap=/strand_count=/
+                                # strand_linewidth= + dark_strands preset
 
 #: Camera-motion widget options (values are the MotionSpec vocabularies).
 ZOOM_MODES = ("off", "in", "out")
@@ -555,6 +559,9 @@ def _aesthetic_preset_section(status, spec_dict: Dict[str, Any], rev: int) -> No
         st.session_state["watermark"] = None
         st.session_state["aes_subtitle"] = None
         st.session_state["aes_encoding_line"] = True
+        st.session_state["aes_basemap"] = None
+        st.session_state["aes_strand_count"] = None
+        st.session_state["aes_strand_linewidth"] = None
         return
 
     presets = list(getattr(viz, "AESTHETIC_PRESETS",
@@ -566,6 +573,7 @@ def _aesthetic_preset_section(status, spec_dict: Dict[str, Any], rev: int) -> No
         "dark_flow": "Dark flow — LIC current/wind streaks on black",
         "dark_glow": "Dark glow — event glow with bloom on black",
         "paper_prism": "Paper prism — 3D extrusion on warm paper",
+        "dark_strands": "Dark strands — advected particle trails on black",
     }
     options = [None] + presets
     current = st.session_state.get("aesthetic_preset")
@@ -667,6 +675,7 @@ def _aesthetic_preset_section(status, spec_dict: Dict[str, Any], rev: int) -> No
     st.session_state["aes_encoding_line"] = enc
 
     _place_labels_section(status, spec_dict, rev)
+    _basemap_strands_section(status, rev)
 
 
 def _place_labels_section(status, spec_dict: Dict[str, Any], rev: int) -> None:
@@ -739,6 +748,83 @@ def _place_labels_section(status, spec_dict: Dict[str, Any], rev: int) -> None:
             st.session_state["aes_min_population"] = None
     else:
         _custom_place_labels_section(rev)
+
+
+def _basemap_strands_section(status, rev: int) -> None:
+    """Basemap style + strand controls — inside the Aesthetics step's preset section.
+
+    Basemap: Preset default / Void black / No basemap / Subtle land.
+    Strands: trail count + line width sliders, shown when the
+    ``dark_strands`` preset is picked (they only affect that preset).
+    Needs survey-viz >= 0.24.0; older peers get the upgrade hint and the
+    controls stay inert (nothing is passed, so the peer default applies
+    and the run never crashes). Sliders at their defaults likewise pass
+    nothing — the survey-viz defaults (3000 trails, 1.4 pt) apply, which
+    keeps the choice version-keyed in the cache fingerprint. Explicit
+    choices need survey-viz >= 0.24.0 at run time (PeerTooOldError with
+    the upgrade command otherwise).
+    """
+    st.markdown("**Basemap & strands**")
+    if not _version_ok(status, MIN_VIZ_STRANDS):
+        st.info(_upgrade_hint(status, "0.24.0",
+                              "Basemap styles and strand controls") +
+                " The reel renders with the preset's default basemap in "
+                "the meantime.")
+        st.session_state["aes_basemap"] = None
+        st.session_state["aes_strand_count"] = None
+        st.session_state["aes_strand_linewidth"] = None
+        return
+
+    if st.session_state.get("aesthetic_preset") is None:
+        st.caption("Basemap styles and strand controls are preset-path "
+                   "features — pick an aesthetic preset above to use them.")
+
+    basemap_labels = {
+        None: "Preset default",
+        "void_black": "Void black — pure black land",
+        "no_basemap": "No basemap — geography emerges from the data",
+        "subtle_land": "Subtle land — faint land fill",
+    }
+    basemap_options = [None, "void_black", "no_basemap", "subtle_land"]
+    current = st.session_state.get("aes_basemap")
+    basemap = st.selectbox(
+        "Basemap style",
+        options=basemap_options,
+        format_func=lambda v: basemap_labels.get(v, v),
+        index=(basemap_options.index(current)
+               if current in basemap_options else 0),
+        key=f"aes_basemap_{rev}",
+        help="How land is drawn under the data. Preset default keeps "
+             "the preset's bundled look.",
+    )
+    st.session_state["aes_basemap"] = basemap
+
+    if st.session_state.get("aesthetic_preset") == "dark_strands":
+        count = st.slider(
+            "Strand count",
+            500, 10000,
+            int(st.session_state.get("aes_strand_count") or 3000),
+            step=100,
+            key=f"aes_strand_count_{rev}",
+            help="Particle trails per frame. More strands = denser "
+                 "texture, slower renders. 3000 is the survey-viz default.",
+        )
+        st.session_state["aes_strand_count"] = (
+            None if count == 3000 else count)
+        width = st.slider(
+            "Strand line width",
+            0.5, 3.0,
+            float(st.session_state.get("aes_strand_linewidth") or 1.4),
+            step=0.1,
+            key=f"aes_strand_linewidth_{rev}",
+            help="Strand width in points. 1.4 is the survey-viz default.",
+        )
+        st.session_state["aes_strand_linewidth"] = (
+            None if abs(width - 1.4) < 1e-9 else width)
+    else:
+        st.caption("Strand controls apply to the Dark strands preset.")
+        st.session_state["aes_strand_count"] = None
+        st.session_state["aes_strand_linewidth"] = None
 
 
 def _custom_place_labels_section(rev: int) -> None:
@@ -1618,6 +1704,9 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
             place_labels=st.session_state.get("aes_place_labels"),
             max_labels=st.session_state.get("aes_max_labels"),
             min_population=st.session_state.get("aes_min_population"),
+            basemap=st.session_state.get("aes_basemap"),
+            strand_count=st.session_state.get("aes_strand_count"),
+            strand_linewidth=st.session_state.get("aes_strand_linewidth"),
             derived=_run_derived())
     except (pipeline.UnfetchableRegionError,
             pipeline.UnsupportedVariableError) as exc:

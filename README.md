@@ -17,7 +17,7 @@ inspectable reason it was chosen. No LLM is required at runtime.
 | Repo | Role | Version tested |
 |---|---|---|
 | [survey-currents](https://github.com/crieck2010/survey-currents) | Data-fetch engines for all 13 sources | v0.15.0 |
-| [survey-viz](https://github.com/crieck2010/survey-viz) | Description parser + reel frame renderer | v0.19.0 |
+| [survey-viz](https://github.com/crieck2010/survey-viz) | Description parser + reel frame renderer | v0.24.0 |
 | [survey-animate](https://github.com/crieck2010/survey-animate) | Frames → MP4 encoder (resolves ffmpeg) | v0.2.0 |
 | [survey-layout](https://github.com/crieck2010/survey-layout) | Platform aspect ratios + safe-zone canvases (optional) | v0.1.0 |
 | [survey-style](https://github.com/crieck2010/survey-style) | Reusable style presets for the Aesthetics step (optional) | v0.1.0 |
@@ -26,7 +26,7 @@ inspectable reason it was chosen. No LLM is required at runtime.
 | [survey-derive](https://github.com/crieck2010/survey-derive) | Climatological anomaly products (optional) | v0.1.0 |
 | [survey-publish](https://github.com/crieck2010/survey-publish) | Social-media publishing: per-platform adapters + terminal OAuth connect (optional) | v0.1.0 |
 | [survey-timescales](https://github.com/crieck2010/survey-timescales) | Suggested time-window framing: season/cycle/event-density modes + reasons (optional) | v0.1.0 |
-| [survey-aesthetics](https://github.com/crieck2010/survey-aesthetics) | mapped.earth preset engine: LIC flow streaks, event glow, 3D prisms, editorial furniture (optional) | v0.1.0 |
+| [survey-aesthetics](https://github.com/crieck2010/survey-aesthetics) | mapped.earth preset engine: LIC flow streaks, event glow, 3D prisms, advected strands, basemap styles, editorial furniture (optional) | v0.2.0 |
 | [survey-gazetteer](https://github.com/crieck2010/survey-gazetteer) | Place-label gazetteer for the aesthetic preset path (optional) | v0.1.0 |
 | **reel-studio** (this repo) | Streamlit web app + UI-free pipeline orchestration | — |
 
