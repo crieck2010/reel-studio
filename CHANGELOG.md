@@ -2,6 +2,18 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.19.1] - 2026-10-01
+
+### Added
+- **Narrative story facts on `RunResult.story`** (survey-narrate peer,
+  optional). `run_pipeline` computes `narrate.story_facts(field)` after
+  the fetch and attaches `{"status": "ok", "facts", "caption"}` to the
+  result and the run manifest/provenance; when the peer is missing it
+  records `{"status": "unavailable", ...}` and the render proceeds
+  untouched. Lets callers (e.g. the daily reel email) quote
+  data-derived narrative stats — peak speed with location/time, means,
+  temperature ranges — in the mapped.earth caption style.
+
 ## [0.19.0] - 2026-10-01
 
 ### Added

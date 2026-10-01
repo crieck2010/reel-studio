@@ -1074,6 +1074,10 @@ class RunResult:
     #: target platform: "legacy" | "tiktok" | "instagram-reel" | ...
     platform: str = "legacy"
     provenance: Dict[str, Any] = field(default_factory=dict)
+    #: narrative story facts from the survey-narrate peer (if installed):
+    #: {"status": "ok", "facts": {...}, "caption": str} or
+    #: {"status": "unavailable", "reason": str}. Never fails the render.
+    story: Dict[str, Any] = field(default_factory=dict)
 
 
 def _sha256_file(path: str) -> str:
@@ -2675,6 +2679,23 @@ def run_pipeline(
     render_field = (render_dict if render_dict is not None
                     else _field_to_dict(field))
     series_dict = _series_to_dict(series)
+    # -- narrative story facts (survey-narrate peer, optional) -----------------
+    # Computed from the fetched field; never fails the render. Attached
+    # to RunResult.story and the run manifest so callers (e.g. the daily
+    # reel email) can quote data-derived narrative stats in captions.
+    story: Dict[str, Any] = {"status": "unavailable", "reason": ""}
+    try:
+        import narrate as _narrate
+        _facts = _narrate.story_facts(
+            field, region_name=str(getattr(spec, "region_key", "")))
+        story = {
+            "status": "ok",
+            "facts": _facts,
+            "caption": _narrate.render_caption(_facts, style="email"),
+        }
+    except Exception as exc:  # never fail a render for a caption
+        story = {"status": "unavailable",
+                 "reason": f"{type(exc).__name__}: {exc}"}
     # -- derived products (survey-derive peer, optional) ----------------------
     # A climatological anomaly product replaces the raw field with
     # field-minus-climatology (or the standardized / percent-of-normal
@@ -2890,6 +2911,9 @@ def run_pipeline(
         "spec": spec.to_dict() if hasattr(spec, "to_dict") else dict(spec),
         "lake": lake,
         "source": source,
+        # Narrative story facts (survey-narrate peer, optional): {"status":
+        # "ok", "facts", "caption"} or {"status": "unavailable", ...}.
+        "story": story,
         "fetch": {
             # "sst" for the SST adapters, "era5" for the atmosphere adapter,
             # "oscar"/"cmems-currents" for the currents adapters, "firms"
@@ -2933,6 +2957,7 @@ def run_pipeline(
                            if audio_path is not None else None),
         },
         "derived": derived_report,
+        "story": story,
         "cache": cache_report,
     }
 
@@ -2947,6 +2972,7 @@ def run_pipeline(
         source=source,
         platform=platform or "legacy",
         provenance=provenance,
+        story=story,
     )
 
 
