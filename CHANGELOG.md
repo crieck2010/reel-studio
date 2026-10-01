@@ -2,6 +2,13 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.19.2] - 2026-10-01
+
+### Added
+- `run_pipeline(..., region_name=None)`: human-readable region label for
+  the narrative facts/captions (e.g. `"North America"`). Defaults to
+  `spec.region_key` when unset, so existing callers are unaffected.
+
 ## [0.19.1] - 2026-10-01
 
 ### Added

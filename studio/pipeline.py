@@ -1560,6 +1560,7 @@ def run_pipeline(
     bivariate: Optional[bool] = None,
     forecast_hours: Optional[tuple] = None,
     ofs_code: Optional[str] = None,
+    region_name: Optional[str] = None,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1606,6 +1607,9 @@ def run_pipeline(
             survey-viz >= 0.17.0's ``render_viz`` so data-driven
             captions are burned onto the frames and recorded in the
             manifest. Older peers raise :class:`PeerTooOldError`.
+        region_name: human-readable region label for the narrative
+            facts/captions (e.g. ``"North America"``). Defaults to
+            ``spec.region_key`` (e.g. ``"north-america"``) when unset.
         platform: target distribution platform, e.g. ``"tiktok"``,
             ``"instagram-reel"``, ``"youtube-shorts"``, ``"x-portrait"``,
             ``"square"``, ``"widescreen"``. Built into a survey-layout
@@ -2687,7 +2691,9 @@ def run_pipeline(
     try:
         import narrate as _narrate
         _facts = _narrate.story_facts(
-            field, region_name=str(getattr(spec, "region_key", "")))
+            field,
+            region_name=(region_name if region_name
+                         else str(getattr(spec, "region_key", ""))))
         story = {
             "status": "ok",
             "facts": _facts,

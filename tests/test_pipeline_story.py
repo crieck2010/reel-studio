@@ -123,3 +123,15 @@ def test_run_pipeline_story_unavailable_without_peer(tmp_path, monkeypatch):
     # the render itself still succeeded
     assert result.n_frames == 1
     assert os.path.exists(result.video_path)
+
+
+def test_run_pipeline_region_name_overrides_region_key(tmp_path):
+    """region_name kwarg replaces the slug in narrative facts/captions."""
+    pytest.importorskip("narrate")
+    result = run_pipeline(FakeSpec(), make_peers(), str(tmp_path),
+                          region_name="North America")
+    story = result.story
+    assert story["status"] == "ok"
+    assert story["facts"]["region_name"] == "North America"
+    assert "North America" in story["caption"]
+    assert "north-america" not in story["caption"]
