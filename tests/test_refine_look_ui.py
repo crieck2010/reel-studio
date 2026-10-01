@@ -65,6 +65,9 @@ class _StubStreamlit:
         return self._val(label, value)
     def text_input(self, label, value="", key=None, help=None):
         return self._val(label, value)
+    def number_input(self, label, min_value=None, step=None, value=0,
+                     key=None, help=None):
+        return self._val(label, value)
     def selectbox(self, label, options, format_func=None, index=0,
                   key=None, help=None, disabled=False):
         if disabled:
