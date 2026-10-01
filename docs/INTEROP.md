@@ -383,6 +383,17 @@ four lakes' bboxes already fit the grid.
   analysis per sampled day, 0.25° grid. The grid is global, so no
   region-key check applies (like `era5`, unlike the Great-Lakes
   sources).
+* `run_pipeline(..., forecast_hours=(0, 6))` (survey-currents ≥
+  0.17.0) adds forecast-hour steps per sampled day — the reel steps
+  through the forecast horizon within each day. Validated up front as
+  a non-empty tuple/list of ints in 0..120 (`ValueError` otherwise)
+  and forwarded only when set; `None` passes nothing, so older peers
+  keep working. Only meaningful for `source="gfs-wind"`: a non-None
+  value with any other source raises `ValueError` instead of being
+  silently ignored. Caller owns the frame budget — each extra hour
+  multiplies the fetch (~110 KB per 0.25° step for a North-America
+  subregion, ~2.4 MB worst-case full-globe fallback) and the frame
+  count. Pipeline/CLI level only — no Streamlit control.
 * Only serves `variable == "wind"`: `plan_fetch` returns a
   `bad_variable` plan for anything else (SST goes through
   glsea/oisst/mur; the other atmosphere variables go through `era5`).
@@ -397,6 +408,59 @@ four lakes' bboxes already fit the grid.
   0.25° GFS, so a multi-year climatology baseline is impossible.
 * Provenance: `RunResult.source == "gfs-wind"`, field provenance under
   `provenance["fetch"]["gfs-wind"]`.
+
+## Bivariate strand encoding contract (survey-viz 0.26.0)
+
+* `run_pipeline(..., bivariate=...)` forwards into `render_viz_kwargs`
+  only when not `None` — the exact `landmask` pattern: `None`
+  (default) leaves the survey-viz default and passes nothing, so
+  older peers keep working untouched; `False` restores the flat
+  single-variable look. An explicit choice on a survey-viz peer older
+  than 0.26.0 raises the honest `PeerTooOldError` upgrade message.
+* Because it lands in `render_viz_kwargs`, the choice is part of the
+  frame-batch fingerprint — bivariate on/off invalidates the cache.
+* Step 3 (Aesthetics) shows **Bivariate encoding (brightness =
+  speed)** in the Basemap & strands group, default checked: checked
+  leaves the peer default (nothing forwarded), unchecked forwards
+  `bivariate=False`. Disabling: uncheck the box in the UI, or pass
+  `bivariate=False` to `run_pipeline`.
+* Honest limitation (inherited from survey-viz 0.26.0): the bivariate
+  gain interacts with the strand alpha ramp — at very low speeds the
+  brightness encoding can push strands toward invisible.
+
+## OFS THREDDS contract (survey-viz 0.26.0 / survey-currents 0.18.0)
+
+* `wire_peers` exposes `fetch_ofs_thredds` (None when
+  survey-currents < 0.18.0 — the pipeline then raises the honest
+  upgrade message naming ≥ 0.18.0).
+* `run_pipeline` calls
+  `fetch_ofs_thredds(ofs_code, tuple(spec.bbox), spec.start, spec.end)`
+  — the keyless CO-OPS THREDDS OPeNDAP subset; the bbox is subset
+  server-side, 6-hourly nowcast cadence by peer default. Only serves
+  `variable == "currents"` (`plan_fetch` returns `bad_variable`
+  otherwise); fetchable in any region at plan time.
+* **`ofs_code` is pinned explicitly — there is no global default.**
+  Each OFS model covers a fixed coastal region (`SSCOFS`, `CBOFS`,
+  `WCOFS`, `NGOFS2`, `GOMOFS`, `DBOFS`, `SFBOFS`, `LEOFS`, `LMHOFS`,
+  `LOOFS`, `LSOFS`, `CIOFS`); `source="ofs-thredds"` without
+  `ofs_code=` raises `ValueError` naming the known codes, and a bbox
+  outside the pinned model's domain fails honestly at fetch time.
+  `ofs_code` is not an explicit frame-batch cache key — the fetched
+  field digest changes with the pin, so a wrong-model cache reuse
+  cannot happen through identical pixels.
+* The returned field is `CurrentField`-compatible (u/v in m/s,
+  temperature in °C, land→NaN) and feeds survey-viz's currents render
+  path unchanged — the pipeline adapts it to scalar speed via
+  `_field_to_dict`, exactly like the OSCAR/CMEMS branch.
+* Fetch failures raise `RuntimeError` naming the likely causes
+  (network, netCDF4 missing, outside the ~31-day THREDDS retention,
+  bbox outside the pinned model domain).
+* Derived products are honestly ineligible: `ofs-thredds` is in
+  `_DERIVED_INELIGIBLE` because THREDDS keeps only ~31 days of OFS
+  output, so a multi-year climatology baseline is impossible.
+* Provenance: `RunResult.source == "ofs-thredds"`, field provenance
+  under `provenance["fetch"]["ofs-thredds"]` (carries `source` as
+  `"ofs-thredds/<CODE>"` and the per-timestep OPeNDAP URLs).
 
 ## Cinematic motion + audio contract (survey-animate 0.2.0)
 

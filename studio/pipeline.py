@@ -140,6 +140,7 @@ SOURCE_LABELS = {
     "oceancolor": "NOAA CoastWatch Ocean Color",
     "comcat": "USGS Earthquake Catalog (ComCat)",
     "gfs-wind": "NOAA GFS 10m winds (NOMADS), keyless",
+    "ofs-thredds": "NOAA OFS surface currents (CO-OPS THREDDS), keyless",
 }
 
 #: GLSEA daily SST, sampled this often for the reel. Monthly-ish cadence
@@ -202,6 +203,8 @@ _VIZ_UPGRADE = ("pip install --upgrade "
                "git+https://github.com/crieck2010/survey-viz.git")
 _ANIMATE_UPGRADE = ("pip install --upgrade "
                    "git+https://github.com/crieck2010/survey-animate.git")
+_CURRENTS_UPGRADE = ("pip install --upgrade "
+                     "git+https://github.com/crieck2010/survey-currents.git")
 
 #: Derived anomaly products (survey-derive peer, optional). Keys are the
 #: ``derived["product"]`` values accepted by :func:`run_pipeline`.
@@ -231,7 +234,42 @@ _DERIVED_INELIGIBLE = {
     "comcat": "ComCat carries earthquake events, not a gridded scalar field.",
     "gfs-wind": ("NOMADS keeps only ~10 days of the 0.25° GFS — a "
                  "multi-year climatology baseline is impossible."),
+    "ofs-thredds": ("CO-OPS THREDDS keeps only ~31 days of OFS output — a "
+                    "multi-year climatology baseline is impossible."),
 }
+
+
+#: GFS forecast-hour bounds accepted by run_pipeline's forecast_hours
+#: (mirrors survey-currents >= 0.17.0's own range).
+_FORECAST_HOURS_MIN = 0
+_FORECAST_HOURS_MAX = 120
+
+
+def _validate_forecast_hours(forecast_hours: Any) -> Tuple[int, ...]:
+    """Normalize ``forecast_hours`` or raise ValueError — fail fast.
+
+    Accepts a non-empty tuple/list of ints in 0..120 and returns the
+    normalized tuple. Anything else raises ValueError naming the
+    requirement — before any fetch, never mid-reel.
+    """
+    if not isinstance(forecast_hours, (tuple, list)):
+        raise ValueError(
+            f"forecast_hours must be a tuple/list of ints in "
+            f"{_FORECAST_HOURS_MIN}..{_FORECAST_HOURS_MAX}, got "
+            f"{type(forecast_hours).__name__}")
+    hours = list(forecast_hours)
+    if not hours:
+        raise ValueError(
+            "forecast_hours must be a non-empty tuple of ints in "
+            f"{_FORECAST_HOURS_MIN}..{_FORECAST_HOURS_MAX}")
+    bad = [h for h in hours
+           if not isinstance(h, int) or isinstance(h, bool)
+           or not (_FORECAST_HOURS_MIN <= h <= _FORECAST_HOURS_MAX)]
+    if bad:
+        raise ValueError(
+            f"forecast_hours must be ints in "
+            f"{_FORECAST_HOURS_MIN}..{_FORECAST_HOURS_MAX}, got {bad!r}")
+    return tuple(hours)
 
 
 def _normalize_derived(
@@ -335,7 +373,7 @@ class FetchPlan:
     #: which adapter the fetch uses:
     #: "glsea" | "oisst" | "mur" | "era5" | "oscar" | "cmems-currents" |
     #: "firms" | "nsidc" | "imerg" | "blackmarble" | "gebco" | "ibtracs" |
-    #: "grace" | "usgs" | "oceancolor" | "comcat" | "gfs-wind"
+    #: "grace" | "usgs" | "oceancolor" | "comcat" | "gfs-wind" | "ofs-thredds"
     #: ("ok" plans only)
     source: str = ""
 
@@ -646,6 +684,41 @@ def plan_fetch(spec: Any, is_fetchable: Callable[[str], bool],
             region_key=region_key,
             variable=variable,
             source="comcat",
+        )
+    # NOAA OFS surface currents via CO-OPS THREDDS (survey-viz >= 0.26.0,
+    # survey-currents >= 0.18.0): only serves the 'currents' variable.
+    # Fetchable in ANY region at plan time — each OFS model covers a
+    # fixed coastal region, and the model pin (ofs_code=, explicit —
+    # there is no honest global default) must cover the spec's bbox.
+    # A bbox outside the pinned model's domain fails honestly at fetch
+    # time, never silently.
+    if source == "ofs-thredds":
+        if variable != "currents":
+            return FetchPlan(
+                fetchable=False,
+                reason=(
+                    f"Source 'ofs-thredds' only serves the 'currents' "
+                    f"variable; got variable '{variable}'. (Wind goes "
+                    "through 'gfs-wind' or 'era5'.)"
+                ),
+                region_key=region_key,
+                variable=variable,
+                kind="bad_variable",
+            )
+        return FetchPlan(
+            fetchable=True,
+            reason=(
+                f"Region '{region_key}' is routable via "
+                f"{SOURCE_LABELS['ofs-thredds']} (variable 'currents', "
+                "source 'ofs-thredds'). The OFS model pin (ofs_code=) "
+                "must cover the region — pass it explicitly on "
+                "run_pipeline; the fetch refuses honestly when the "
+                "bbox lies outside the pinned model domain. THREDDS "
+                "keeps only ~31 days of OFS output."
+            ),
+            region_key=region_key,
+            variable=variable,
+            source="ofs-thredds",
         )
     # Sea level (survey-viz >= 0.11.0) is refused honestly here: no
     # adapter exists, so it is never answered with a GRACE map.
@@ -1480,6 +1553,9 @@ def run_pipeline(
     strand_count: Optional[int] = None,
     strand_linewidth: Optional[float] = None,
     landmask: Optional[bool] = None,
+    bivariate: Optional[bool] = None,
+    forecast_hours: Optional[tuple] = None,
+    ofs_code: Optional[str] = None,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1601,6 +1677,47 @@ def run_pipeline(
             leaves the peer default and passes nothing. Needs
             survey-viz >= 0.25.2 when set. Part of the frame-batch
             fingerprint.
+        bivariate: bivariate strand encoding for the ``dark_strands``
+            preset (BRIGHTNESS = SPEED on top of the air-temperature
+            color ramp, the survey-viz >= 0.26.0 default). ``None``
+            (default) leaves the peer default and passes nothing;
+            ``False`` restores the flat single-variable look. Needs
+            survey-viz >= 0.26.0 when set. Part of the frame-batch
+            fingerprint. Interacts with the strand alpha ramp: at
+            very low speeds the brightness encoding can push strands
+            toward invisible — inherited from survey-viz 0.26.0, not
+            something the pipeline can tune.
+        forecast_hours: GFS forecast-hour steps (e.g. ``(0, 6)``) for
+            source ``"gfs-wind"`` — one snapshot per (sampled day,
+            forecast hour), so the reel steps through the forecast
+            horizon within each day. ``None`` (default) leaves the
+            peer default ``(0,)`` and passes nothing, so older peers
+            keep working untouched. Needs survey-currents >= 0.17.0
+            when set; ``ValueError`` on anything that is not a
+            non-empty tuple of ints in 0..120. Only meaningful for
+            ``source="gfs-wind"`` — a non-None value with any other
+            source raises ``ValueError`` instead of being silently
+            ignored (other sources have no forecast-hour axis; OFS
+            nowcast/forecast is pinned by the peer's ``prefer``
+            default). Caller owns the frame budget: each extra hour
+            multiplies the fetch (~110 KB per 0.25° step for a
+            North-America subregion, ~2.4 MB worst-case full-globe
+            fallback) and the frame count.
+        ofs_code: explicit OFS model pin for source ``"ofs-thredds"``
+            — e.g. ``"SSCOFS"`` (San Francisco), ``"CBOFS"``
+            (Chesapeake Bay), ``"WCOFS"`` (West Coast), ``"NGOFS2"``
+            (Northern Gulf), ``"GOMOFS"`` (Gulf of Mexico),
+            ``"DBOFS"`` (Delaware Bay), ``"SFBOFS"`` (San Francisco
+            Bay), ``"LEOFS"`` (Lake Erie), ``"LMHOFS"`` (Lake
+            Michigan-Huron), ``"LOOFS"`` (Lake Ontario), ``"LSOFS"``
+            (Lake Superior), ``"CIOFS"`` (Columbia River). Required
+            when ``source="ofs-thredds"`` — each OFS model covers a
+            fixed coastal region and there is no honest global
+            default, so the pipeline refuses rather than guessing
+            (mismatched pin + bbox fails honestly at fetch time when
+            the bbox lies outside the model domain). Not an explicit
+            frame-batch cache key — the fetched field digest changes
+            with the pin.
         cache: optional render cache (a ``cachex.Cache`` from the
             survey-cache peer, or any duck-typed object with
             ``put_bytes``/``put_file``/``get_bytes``/``tag``/
@@ -1654,7 +1771,9 @@ def run_pipeline(
         RuntimeError: wrapped fetch failures (network, NetCDF, ...).
         PeerTooOldError: a requested feature needs a newer peer.
         ValueError: ``audio_path`` given but not a file; malformed
-            ``derived``; ``derived`` requested for an ineligible source.
+            ``derived``; ``derived`` requested for an ineligible source;
+            malformed ``forecast_hours``; ``forecast_hours`` given for a
+            non-GFS source; ``source="ofs-thredds"`` without ``ofs_code``.
     """
     def report(frac: float, message: str) -> None:
         if progress is not None:
@@ -1728,12 +1847,14 @@ def run_pipeline(
             render_viz_kwargs["min_population"] = min_population
 
     # Basemap styles + strand controls (survey-viz >= 0.24.0; landmask
-    # needs >= 0.25.2): only when the user made an explicit choice, so
-    # older peers keep working untouched. Everything lands in
-    # render_viz_kwargs, which the frame-batch fingerprint already
-    # covers — style/strand changes invalidate the cache correctly.
+    # needs >= 0.25.2; bivariate needs >= 0.26.0): only when the user
+    # made an explicit choice, so older peers keep working untouched.
+    # Everything lands in render_viz_kwargs, which the frame-batch
+    # fingerprint already covers — style/strand changes invalidate the
+    # cache correctly.
     if (basemap is not None or strand_count is not None
-            or strand_linewidth is not None or landmask is not None):
+            or strand_linewidth is not None or landmask is not None
+            or bivariate is not None):
         if not _supports_kw(peers.render_viz, "basemap"):
             raise PeerTooOldError(
                 "survey-viz",
@@ -1745,6 +1866,12 @@ def run_pipeline(
                 "survey-viz",
                 "wind strand landmask (needs >= 0.25.2)",
                 _VIZ_UPGRADE)
+        if (bivariate is not None
+                and not _supports_kw(peers.render_viz, "bivariate")):
+            raise PeerTooOldError(
+                "survey-viz",
+                "bivariate strand encoding (needs >= 0.26.0)",
+                _VIZ_UPGRADE)
         if basemap is not None:
             render_viz_kwargs["basemap"] = basemap
         if strand_count is not None:
@@ -1753,6 +1880,8 @@ def run_pipeline(
             render_viz_kwargs["strand_linewidth"] = strand_linewidth
         if landmask is not None:
             render_viz_kwargs["landmask"] = landmask
+        if bivariate is not None:
+            render_viz_kwargs["bivariate"] = bivariate
 
     # Platform canvas (survey-layout + survey-viz >= 0.18.0): only when
     # a non-legacy platform is requested, so older peers keep working
@@ -1835,6 +1964,17 @@ def run_pipeline(
     os.makedirs(out_dir, exist_ok=True)
     frames_dir = os.path.join(out_dir, "frames")
     os.makedirs(frames_dir, exist_ok=True)
+
+    # forecast_hours (GFS only): validate the value shape first, then
+    # refuse non-GFS sources honestly instead of silently ignoring the
+    # hours (other sources have no forecast-hour axis; OFS
+    # nowcast/forecast selection lives in the survey-currents peer).
+    if forecast_hours is not None:
+        forecast_hours = _validate_forecast_hours(forecast_hours)
+        if source != "gfs-wind":
+            raise ValueError(
+                "forecast_hours is only supported for source "
+                f"'gfs-wind', got source '{source}'.")
 
     # -- 1. fetch -----------------------------------------------------------
     clamp_notes: List[str] = []
@@ -1930,6 +2070,9 @@ def run_pipeline(
         # panel. render_dict is the field's to_dict() form, which
         # carries grids["u10"]/grids["v10"] plus air_temperature (°F)
         # for survey-viz's dark_flow/dark_strands wind path.
+        # forecast_hours (survey-currents >= 0.17.0) adds extra
+        # forecast steps per sampled day — validated up front and
+        # forwarded only when set, so older peers keep working.
         label = SOURCE_LABELS["gfs-wind"]
         report(0.05, f"Fetching {label} 10-m wind grid…")
         fetch_fn = getattr(peers, "fetch_gfs_wind", None)
@@ -1939,10 +2082,18 @@ def run_pipeline(
                 "GFS wind adapter: pip install --upgrade "
                 "git+https://github.com/crieck2010/survey-currents.git"
             )
+        fetch_kwargs: Dict[str, Any] = {}
+        if forecast_hours is not None:
+            if not _supports_kw(fetch_fn, "forecast_hours"):
+                raise PeerTooOldError(
+                    "survey-currents",
+                    "GFS forecast-hour steps (needs >= 0.17.0)",
+                    _CURRENTS_UPGRADE)
+            fetch_kwargs["forecast_hours"] = forecast_hours
         try:
             field = fetch_fn(
                 tuple(spec.bbox), spec.start, spec.end,
-                stride_days=stride_days)
+                stride_days=stride_days, **fetch_kwargs)
         except Exception as exc:
             raise RuntimeError(
                 f"GFS wind fetch failed ({type(exc).__name__}: {exc}). "
@@ -2434,6 +2585,54 @@ def run_pipeline(
                        else field)
         series = None
         fetch_key = "comcat"
+    elif source == "ofs-thredds":
+        # NOAA OFS surface currents via CO-OPS THREDDS
+        # (survey-currents >= 0.18.0): fetch(ofs_code, bbox, start, end)
+        # on the spec bbox directly — the subset happens server-side.
+        # series=None: there is no lake-average equivalent; render_viz
+        # shows a placeholder chart panel. The field is
+        # CurrentField-compatible (u/v in m/s, temperature in degC,
+        # land→NaN) and feeds survey-viz's currents render path
+        # unchanged, like the OSCAR/CMEMS branch. ofs_code is pinned
+        # EXPLICITLY (run_pipeline's ofs_code kwarg) — each OFS model
+        # covers a fixed coastal region, so a silent global default
+        # would fetch the wrong ocean; the pipeline refuses instead.
+        # No baseline refetch: THREDDS keeps only ~31 days of OFS, so
+        # the source is listed in _DERIVED_INELIGIBLE and derived
+        # requests refuse honestly.
+        label = SOURCE_LABELS["ofs-thredds"]
+        report(0.05, f"Fetching {label} surface-current grid…")
+        fetch_fn = getattr(peers, "fetch_ofs_thredds", None)
+        if fetch_fn is None:
+            raise UnfetchableRegionError(
+                "Source 'ofs-thredds' needs survey-currents>=0.18.0 with "
+                "the THREDDS OFS adapter: pip install --upgrade "
+                "git+https://github.com/crieck2010/survey-currents.git"
+            )
+        if not ofs_code:
+            raise ValueError(
+                "source='ofs-thredds' needs an explicit OFS model pin: "
+                "pass ofs_code= on run_pipeline. Known codes: 'SSCOFS', "
+                "'CBOFS', 'WCOFS', 'NGOFS2', 'GOMOFS', 'DBOFS', "
+                "'SFBOFS', 'LEOFS', 'LMHOFS', 'LOOFS', 'LSOFS', "
+                "'CIOFS'. Each model covers a fixed coastal region — "
+                "there is no global default, and the fetch refuses "
+                "honestly when the bbox lies outside the pinned "
+                "model's domain.")
+        try:
+            field = fetch_fn(
+                str(ofs_code), tuple(spec.bbox), spec.start, spec.end)
+        except Exception as exc:
+            raise RuntimeError(
+                f"OFS THREDDS fetch failed ({type(exc).__name__}: "
+                f"{exc}). Check the network connection, that netCDF4 "
+                "is installed (pip install netCDF4), that the "
+                "requested dates are within the ~31-day THREDDS "
+                "retention, and that the bbox lies inside the pinned "
+                f"OFS model domain ({ofs_code})."
+            ) from exc
+        series = None
+        fetch_key = "ofs-thredds"
     else:
         # Global SST (OISST/MUR): fetch on the spec bbox directly — the
         # global grids have no lake bounds to clamp to — and render with

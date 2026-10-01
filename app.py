@@ -563,6 +563,7 @@ def _aesthetic_preset_section(status, spec_dict: Dict[str, Any], rev: int) -> No
         st.session_state["aes_strand_count"] = None
         st.session_state["aes_strand_linewidth"] = None
         st.session_state["aes_landmask"] = None
+        st.session_state["aes_bivariate"] = None
         return
 
     presets = list(getattr(viz, "AESTHETIC_PRESETS",
@@ -775,6 +776,7 @@ def _basemap_strands_section(status, rev: int) -> None:
         st.session_state["aes_strand_count"] = None
         st.session_state["aes_strand_linewidth"] = None
         st.session_state["aes_landmask"] = None
+        st.session_state["aes_bivariate"] = None
         return
 
     if st.session_state.get("aesthetic_preset") is None:
@@ -835,11 +837,23 @@ def _basemap_strands_section(status, rev: int) -> None:
         # Default (checked) leaves the peer default: nothing is
         # forwarded, so older peers keep working untouched.
         st.session_state["aes_landmask"] = None if clip else False
+        bivar = st.checkbox(
+            "Bivariate encoding (brightness = speed)",
+            value=bool(st.session_state.get("aes_bivariate", True)),
+            key=f"aes_bivariate_{rev}",
+            help="Color strands by air temperature AND shade their "
+                 "brightness by speed (survey-viz 0.26.0 default). "
+                 "Uncheck for the flat single-variable look.",
+        )
+        # Default (checked) leaves the peer default: nothing is
+        # forwarded, so older peers keep working untouched.
+        st.session_state["aes_bivariate"] = None if bivar else False
     else:
         st.caption("Strand controls apply to the Dark strands preset.")
         st.session_state["aes_strand_count"] = None
         st.session_state["aes_strand_linewidth"] = None
         st.session_state["aes_landmask"] = None
+        st.session_state["aes_bivariate"] = None
 
 
 def _custom_place_labels_section(rev: int) -> None:
@@ -1723,6 +1737,7 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
             strand_count=st.session_state.get("aes_strand_count"),
             strand_linewidth=st.session_state.get("aes_strand_linewidth"),
             landmask=st.session_state.get("aes_landmask"),
+            bivariate=st.session_state.get("aes_bivariate"),
             derived=_run_derived())
     except (pipeline.UnfetchableRegionError,
             pipeline.UnsupportedVariableError) as exc:

@@ -2,6 +2,71 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.19.0] - 2026-10-01
+
+### Added
+- **`bivariate` pipeline kwarg + "Bivariate encoding (brightness =
+  speed)" checkbox** (survey-viz >= 0.26.0). `run_pipeline(bivariate=...)`
+  forwards into `render_viz` only when not None, mirroring the
+  `landmask` pattern exactly; `bivariate=None` (default) leaves the
+  peer default and passes nothing, so older peers keep working
+  untouched. An explicit choice on a survey-viz peer older than 0.26.0
+  raises the honest `PeerTooOldError` upgrade message. Because it
+  lands in `render_viz_kwargs`, the choice is part of the frame-batch
+  fingerprint and invalidates the cache. Step 3 (Aesthetics) gains the
+  checkbox in the Basemap & strands group next to "Clip strands to
+  land", default checked: checked leaves the peer default (nothing
+  forwarded — old peers untouched), unchecked forwards
+  `bivariate=False` to restore the flat single-variable look.
+- **`forecast_hours` pipeline kwarg** for `source="gfs-wind"`
+  (survey-currents >= 0.17.0): pass `forecast_hours=(0, 6)` to add
+  forecast-hour steps per sampled day, so the reel steps through the
+  forecast horizon within each day. Validated fail-fast as a
+  non-empty tuple/list of ints in 0..120 (`ValueError` otherwise) and
+  forwarded to `fetch_gfs_wind` only when set — `None` passes
+  nothing, so older peers keep working untouched. A non-None value
+  with any other source raises `ValueError` instead of being
+  silently ignored (other sources have no forecast-hour axis; OFS
+  nowcast/forecast selection lives in the peer). Pipeline/CLI level
+  only — no Streamlit control. An old fetch fn without the kwarg
+  raises the honest `PeerTooOldError` naming >= 0.17.0.
+- **`source="ofs-thredds"` routing** (survey-viz >= 0.26.0,
+  survey-currents >= 0.18.0): NOAA OFS surface currents via the
+  keyless CO-OPS THREDDS OPeNDAP subset — `plan_fetch` routes it for
+  `variable="currents"` in any region; the execute branch calls
+  `fetch_ofs_thredds(ofs_code, bbox, start, end)`. The OFS model pin
+  is explicit and required: `run_pipeline(ofs_code=...)` with one of
+  the known codes (`SSCOFS`, `CBOFS`, `WCOFS`, `NGOFS2`, `GOMOFS`,
+  `DBOFS`, `SFBOFS`, `LEOFS`, `LMHOFS`, `LOOFS`, `LSOFS`, `CIOFS`) —
+  there is no global default (each model covers a fixed coastal
+  region), so a missing pin raises `ValueError` and a bbox outside
+  the pinned model's domain fails honestly at fetch time. The field
+  is `CurrentField`-compatible and feeds survey-viz's currents
+  render path unchanged (scalar speed via `_field_to_dict`, like
+  OSCAR/CMEMS). `wire_peers` exposes `fetch_ofs_thredds` (None when
+  the peer is older than 0.18.0 — the pipeline then raises the honest
+  upgrade message). 28 new tests in
+  `tests/test_pipeline_richness_v19.py`.
+
+### Changed
+- README's peer-versions table pins survey-viz v0.26.0 and
+  survey-currents v0.18.0; the supported-sources table gains NOAA OFS
+  (15 sources total); docs/INTEROP.md gains the bivariate, OFS
+  THREDDS, and forecast_hours contracts.
+
+### Honest limitations
+- Bivariate gain × strand alpha-ramp interaction is inherited from
+  survey-viz 0.26.0: at very low speeds the brightness encoding can
+  push strands toward invisible — the pipeline cannot tune it.
+- `forecast_hours` cost: each extra hour multiplies the fetch (~110
+  KB per 0.25° GFS step for a North-America subregion, ~2.4 MB
+  worst-case full-globe fallback) and the frame count — the caller
+  owns the frame budget.
+- THREDDS keeps only ~31 days of OFS output, and `ofs-thredds` is
+  honestly ineligible for derived climatology products for that
+  reason; a mismatched `ofs_code` pin returns nothing for bboxes
+  outside its fixed coastal domain.
+
 ## [0.18.1] - 2026-10-01
 
 ### Added
