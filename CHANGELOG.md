@@ -2,6 +2,19 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.18.1] - 2026-10-01
+
+### Added
+- **`landmask` pipeline kwarg + "Clip strands to land" checkbox**
+  (survey-viz >= 0.25.2). `run_pipeline(landmask=...)` forwards into
+  `render_viz` only when not None, mirroring the `strand_count` /
+  `strand_linewidth` pattern; an explicit choice on a survey-viz peer
+  older than 0.25.2 raises the honest `PeerTooOldError` upgrade
+  message. Step 3 (Aesthetics) gains the checkbox next to the strand
+  sliders, default checked: checked leaves the peer default (clipped,
+  nothing forwarded — older peers keep working untouched), unchecked
+  forwards `landmask=False` to draw strands everywhere.
+
 ## [0.18.0] - 2026-10-01
 
 ### Added

@@ -562,6 +562,7 @@ def _aesthetic_preset_section(status, spec_dict: Dict[str, Any], rev: int) -> No
         st.session_state["aes_basemap"] = None
         st.session_state["aes_strand_count"] = None
         st.session_state["aes_strand_linewidth"] = None
+        st.session_state["aes_landmask"] = None
         return
 
     presets = list(getattr(viz, "AESTHETIC_PRESETS",
@@ -773,6 +774,7 @@ def _basemap_strands_section(status, rev: int) -> None:
         st.session_state["aes_basemap"] = None
         st.session_state["aes_strand_count"] = None
         st.session_state["aes_strand_linewidth"] = None
+        st.session_state["aes_landmask"] = None
         return
 
     if st.session_state.get("aesthetic_preset") is None:
@@ -821,10 +823,23 @@ def _basemap_strands_section(status, rev: int) -> None:
         )
         st.session_state["aes_strand_linewidth"] = (
             None if abs(width - 1.4) < 1e-9 else width)
+        clip = st.checkbox(
+            "Clip strands to land",
+            value=bool(st.session_state.get("aes_landmask", True)),
+            key=f"aes_landmask_{rev}",
+            help="Clip wind strands to the Natural Earth land polygons "
+                 "so the continent emerges from the strands (the "
+                 "warming.watch look). Uncheck to draw strands "
+                 "everywhere.",
+        )
+        # Default (checked) leaves the peer default: nothing is
+        # forwarded, so older peers keep working untouched.
+        st.session_state["aes_landmask"] = None if clip else False
     else:
         st.caption("Strand controls apply to the Dark strands preset.")
         st.session_state["aes_strand_count"] = None
         st.session_state["aes_strand_linewidth"] = None
+        st.session_state["aes_landmask"] = None
 
 
 def _custom_place_labels_section(rev: int) -> None:
@@ -1707,6 +1722,7 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
             basemap=st.session_state.get("aes_basemap"),
             strand_count=st.session_state.get("aes_strand_count"),
             strand_linewidth=st.session_state.get("aes_strand_linewidth"),
+            landmask=st.session_state.get("aes_landmask"),
             derived=_run_derived())
     except (pipeline.UnfetchableRegionError,
             pipeline.UnsupportedVariableError) as exc:

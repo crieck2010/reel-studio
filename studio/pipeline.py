@@ -1479,6 +1479,7 @@ def run_pipeline(
     basemap: Optional[str] = None,
     strand_count: Optional[int] = None,
     strand_linewidth: Optional[float] = None,
+    landmask: Optional[bool] = None,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1594,6 +1595,12 @@ def run_pipeline(
             ``None`` (default) leaves the peer default and passes
             nothing. Needs survey-viz >= 0.24.0 when set. Part of the
             frame-batch fingerprint.
+        landmask: clip ``dark_strands`` wind strands to the Natural
+            Earth land polygons (survey-viz default True — the
+            continent emerges from the strands). ``None`` (default)
+            leaves the peer default and passes nothing. Needs
+            survey-viz >= 0.25.2 when set. Part of the frame-batch
+            fingerprint.
         cache: optional render cache (a ``cachex.Cache`` from the
             survey-cache peer, or any duck-typed object with
             ``put_bytes``/``put_file``/``get_bytes``/``tag``/
@@ -1720,17 +1727,23 @@ def run_pipeline(
         if min_population is not None:
             render_viz_kwargs["min_population"] = min_population
 
-    # Basemap styles + strand controls (survey-viz >= 0.24.0): only when
-    # the user made an explicit choice, so older peers keep working
-    # untouched. Everything lands in render_viz_kwargs, which the
-    # frame-batch fingerprint already covers — style/strand changes
-    # invalidate the cache correctly.
+    # Basemap styles + strand controls (survey-viz >= 0.24.0; landmask
+    # needs >= 0.25.2): only when the user made an explicit choice, so
+    # older peers keep working untouched. Everything lands in
+    # render_viz_kwargs, which the frame-batch fingerprint already
+    # covers — style/strand changes invalidate the cache correctly.
     if (basemap is not None or strand_count is not None
-            or strand_linewidth is not None):
+            or strand_linewidth is not None or landmask is not None):
         if not _supports_kw(peers.render_viz, "basemap"):
             raise PeerTooOldError(
                 "survey-viz",
                 "basemap styles and strand controls (needs >= 0.24.0)",
+                _VIZ_UPGRADE)
+        if (landmask is not None
+                and not _supports_kw(peers.render_viz, "landmask")):
+            raise PeerTooOldError(
+                "survey-viz",
+                "wind strand landmask (needs >= 0.25.2)",
                 _VIZ_UPGRADE)
         if basemap is not None:
             render_viz_kwargs["basemap"] = basemap
@@ -1738,6 +1751,8 @@ def run_pipeline(
             render_viz_kwargs["strand_count"] = strand_count
         if strand_linewidth is not None:
             render_viz_kwargs["strand_linewidth"] = strand_linewidth
+        if landmask is not None:
+            render_viz_kwargs["landmask"] = landmask
 
     # Platform canvas (survey-layout + survey-viz >= 0.18.0): only when
     # a non-legacy platform is requested, so older peers keep working

@@ -68,8 +68,9 @@ def _write_frames(out_dir):
     return [p], manifest
 
 
-def make_peers(*, strands_kw=False):
-    """Fake peers; ``strands_kw`` mimics survey-viz >= 0.24.0."""
+def make_peers(*, strands_kw=False, landmask_kw=False):
+    """Fake peers; ``strands_kw`` mimics survey-viz >= 0.24.0,
+    ``landmask_kw`` mimics survey-viz >= 0.25.2."""
     seen = {}
 
     def is_fetchable(key):
@@ -81,7 +82,19 @@ def make_peers(*, strands_kw=False):
     def fetch_averages(lake, start, end):
         return FakeSeries()
 
-    if strands_kw:
+    if landmask_kw:
+        def render_viz(spec, field, series, out_dir, preset=None,
+                       rotation=None, watermark=None, subtitle=None,
+                       encoding_line=True, place_labels=None,
+                       max_labels=None, min_population=None,
+                       basemap=None, strand_count=None,
+                       strand_linewidth=None, landmask=None):
+            seen.update(preset=preset, basemap=basemap,
+                        strand_count=strand_count,
+                        strand_linewidth=strand_linewidth,
+                        landmask=landmask)
+            return _write_frames(out_dir)
+    elif strands_kw:
         def render_viz(spec, field, series, out_dir, preset=None,
                        rotation=None, watermark=None, subtitle=None,
                        encoding_line=True, place_labels=None,
@@ -362,3 +375,33 @@ def test_preset_picker_offers_dark_strands(app_with_stub):
     assert stub.session_state["aesthetic_preset"] == "dark_strands"
     # Strand sliders ran (defaults pass nothing).
     assert stub.session_state["aes_strand_count"] is None
+
+
+# ---------------------------------------------------------------------------
+# landmask forwarding (v0.18.1)
+# ---------------------------------------------------------------------------
+
+def test_landmask_false_forwarded(tmp_path):
+    fake_peers, seen = make_peers(landmask_kw=True)
+    pipeline.run_pipeline(
+        FakeSpec(), fake_peers, str(tmp_path),
+        aesthetic_preset="dark_strands", landmask=False)
+    assert seen["landmask"] is False
+
+
+def test_landmask_none_not_forwarded(tmp_path):
+    # Default: nothing passed, so older peers keep working untouched
+    # (the fake peer's own default None is what arrives).
+    fake_peers, seen = make_peers(landmask_kw=True)
+    pipeline.run_pipeline(FakeSpec(), fake_peers, str(tmp_path),
+                          aesthetic_preset="dark_strands")
+    assert seen["landmask"] is None
+
+
+def test_peer_without_landmask_kw_raises(tmp_path):
+    # survey-viz >= 0.24.0 but < 0.25.2: basemap/strand kwargs exist,
+    # landmask does not -> honest PeerTooOldError.
+    old_peers, _ = make_peers(strands_kw=True)
+    with pytest.raises(pipeline.PeerTooOldError, match="0.25.2"):
+        pipeline.run_pipeline(FakeSpec(), old_peers, str(tmp_path),
+                              landmask=False)
