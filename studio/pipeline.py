@@ -1436,6 +1436,9 @@ def run_pipeline(
     watermark: Optional[str] = None,
     subtitle: Optional[str] = None,
     encoding_line: bool = True,
+    place_labels: Any = None,
+    max_labels: Optional[int] = None,
+    min_population: Optional[int] = None,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1514,6 +1517,22 @@ def run_pipeline(
             block (None = the auto time-window label).
         encoding_line: draw the preset's honesty line
             (e.g. "BRIGHTNESS = SPEED"). Default True.
+        place_labels: place labels for the preset path — ``True`` for
+            the survey-gazetteer auto labels, ``False`` for none, or an
+            explicit list of label dicts (``{"x": lon, "y": lat,
+            "text": str, "priority": int}``, JSON-serializable).
+            ``None`` (default) leaves the choice to the survey-viz peer
+            (auto when a preset is active, off otherwise) and passes
+            nothing, so older peers keep working untouched. Any
+            explicit choice needs survey-viz >= 0.23.0, otherwise
+            raises :class:`PeerTooOldError` with the upgrade command.
+            Part of the frame-batch fingerprint since it changes the
+            pixels.
+        max_labels: cap for automatic place labels (survey-viz default
+            8). ``None`` (default) leaves the peer default.
+        min_population: minimum place population for automatic place
+            labels (survey-viz default 0). ``None`` (default) leaves
+            the peer default.
         cache: optional render cache (a ``cachex.Cache`` from the
             survey-cache peer, or any duck-typed object with
             ``put_bytes``/``put_file``/``get_bytes``/``tag``/
@@ -1622,6 +1641,23 @@ def run_pipeline(
             render_viz_kwargs["subtitle"] = subtitle
         if encoding_line is not True:
             render_viz_kwargs["encoding_line"] = False
+
+    # Place labels (survey-viz >= 0.23.0): only when the user made an
+    # explicit choice, so older peers keep working untouched. Everything
+    # lands in render_viz_kwargs, which the frame-batch fingerprint
+    # already covers — label changes invalidate the cache correctly.
+    if (place_labels is not None or max_labels is not None
+            or min_population is not None):
+        if not _supports_kw(peers.render_viz, "place_labels"):
+            raise PeerTooOldError(
+                "survey-viz", "place labels (needs >= 0.23.0)",
+                _VIZ_UPGRADE)
+        if place_labels is not None:
+            render_viz_kwargs["place_labels"] = place_labels
+        if max_labels is not None:
+            render_viz_kwargs["max_labels"] = max_labels
+        if min_population is not None:
+            render_viz_kwargs["min_population"] = min_population
 
     # Platform canvas (survey-layout + survey-viz >= 0.18.0): only when
     # a non-legacy platform is requested, so older peers keep working

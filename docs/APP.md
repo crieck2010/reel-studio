@@ -86,7 +86,12 @@ Style the reel before it runs:
   for the region bbox — / Manual degrees; the north arrow rotates with
   the map), **Subtitle** (empty = the automatic time-window label),
   **Watermark** (brand handle, off by default), and the **encoding
-  honesty line** toggle (default on). Incompatible variable/preset
+  honesty line** toggle (default on); **Place labels** (needs
+  survey-viz ≥ 0.23.0): **Off** / **Auto** (gazetteer cities/towns,
+  fetched once per reel; max-labels slider + min-population input) /
+  **Custom** (place names, one per line, resolved via the gazetteer
+  with city + region + country disambiguation so you pick the right
+  "Rochester"). Incompatible variable/preset
   choices warn in the UI and fail fast at run time; presets use their
   own layout grammar, so platform safe-zone canvases do not apply (the
   app warns). The preset is part of the frame-batch fingerprint.

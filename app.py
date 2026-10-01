@@ -28,7 +28,7 @@ import traceback
 import types
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 # Make the ``studio`` package importable when run as ``streamlit run app.py``.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -41,7 +41,7 @@ except ImportError:  # headless / tests: import still works, main() won't run
 from studio import batch, caching, llm_assist, peers, pipeline, scheduler, styling, timescale
 
 APP_TITLE = "reel-studio"
-APP_VERSION = "0.15.0"
+APP_VERSION = "0.16.0"
 PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate",
               "survey-layout", "survey-style", "survey-schedule",
               "survey-publish")
@@ -53,6 +53,9 @@ MIN_ANIMATE_MOTION = (0, 2, 0)   # cinematic motion + audio muxing
 MIN_VIZ_CANVAS = (0, 18, 0)     # render_viz canvas= (platform canvases)
 #: Minimum peer version for the v0.15.0 mapped.earth aesthetic presets.
 MIN_VIZ_PRESET = (0, 22, 0)     # render_viz preset=/rotation=/watermark=
+
+#: Minimum peer version for the v0.16.0 place labels.
+MIN_VIZ_LABELS = (0, 23, 0)     # render_viz place_labels=/max_labels=
 
 #: Camera-motion widget options (values are the MotionSpec vocabularies).
 ZOOM_MODES = ("off", "in", "out")
@@ -662,6 +665,136 @@ def _aesthetic_preset_section(status, spec_dict: Dict[str, Any], rev: int) -> No
              "“BRIGHTNESS = SPEED”.",
     )
     st.session_state["aes_encoding_line"] = enc
+
+    _place_labels_section(status, spec_dict, rev)
+
+
+def _place_labels_section(status, spec_dict: Dict[str, Any], rev: int) -> None:
+    """Place labels — inside the Aesthetics step's preset section.
+
+    Off / Auto / Custom. Needs survey-viz >= 0.23.0; older peers get
+    the upgrade hint and the controls stay inert (nothing is passed, so
+    the peer default applies and the run never crashes). Auto at the
+    default slider values likewise passes nothing — the survey-viz
+    default (auto labels when a preset is active) applies, which keeps
+    older peers working and the choice version-keyed in the cache
+    fingerprint. Explicit Off / tuned Auto / Custom values are passed
+    through and need survey-viz >= 0.23.0 at run time (PeerTooOldError
+    with the upgrade command otherwise).
+    """
+    st.markdown("**Place labels**")
+    if not _version_ok(status, MIN_VIZ_LABELS):
+        st.info(_upgrade_hint(status, "0.23.0", "Place labels") +
+                " The reel renders without place labels in the meantime.")
+        st.session_state["aes_place_labels"] = None
+        st.session_state["aes_max_labels"] = None
+        st.session_state["aes_min_population"] = None
+        return
+
+    if st.session_state.get("aesthetic_preset") is None:
+        st.caption("Place labels are a preset-path feature — pick an "
+                   "aesthetic preset above to use them.")
+
+    label_mode = st.radio(
+        "Place labels",
+        options=["Off", "Auto", "Custom"],
+        index={"Off": 0, "Auto": 1, "Custom": 2}.get(
+            st.session_state.get("aes_label_mode"), 1),
+        key=f"aes_labelmode_{rev}",
+        help="Auto fetches city/town labels for the region from the "
+             "survey-gazetteer peer, once per reel. Custom lets you name "
+             "the places yourself. Off draws no labels.",
+        horizontal=True,
+    )
+    st.session_state["aes_label_mode"] = label_mode
+
+    if label_mode == "Off":
+        st.session_state["aes_place_labels"] = False
+        st.session_state["aes_max_labels"] = None
+        st.session_state["aes_min_population"] = None
+    elif label_mode == "Auto":
+        max_labels = st.slider(
+            "Max labels", 1, 20,
+            int(st.session_state.get("aes_max_labels_ui") or 8),
+            key=f"aes_maxlabels_{rev}",
+            help="Cap on automatic place labels (survey-viz default 8).",
+        )
+        st.session_state["aes_max_labels_ui"] = max_labels
+        min_population = st.number_input(
+            "Min population", min_value=0, step=1000,
+            value=int(st.session_state.get("aes_min_population_ui") or 0),
+            key=f"aes_minpop_{rev}",
+            help="Only places at least this populous are labeled "
+                 "(survey-viz default 0).",
+        )
+        st.session_state["aes_min_population_ui"] = int(min_population)
+        if max_labels != 8 or int(min_population) != 0:
+            st.session_state["aes_place_labels"] = True
+            st.session_state["aes_max_labels"] = int(max_labels)
+            st.session_state["aes_min_population"] = int(min_population)
+        else:
+            # Peer default: pass nothing (see docstring).
+            st.session_state["aes_place_labels"] = None
+            st.session_state["aes_max_labels"] = None
+            st.session_state["aes_min_population"] = None
+    else:
+        _custom_place_labels_section(rev)
+
+
+def _custom_place_labels_section(rev: int) -> None:
+    """Custom place labels: one name per line, gazetteer search, and a
+    per-name disambiguation picker (city + region + country shown)."""
+    try:
+        import gazetteer as _gz
+    except ImportError:
+        _gz = None
+    if _gz is None:
+        st.info("Custom place search needs the survey-gazetteer peer — "
+                "run `Update reel-studio.bat` to install it. No custom "
+                "labels will be drawn in the meantime.")
+        st.session_state["aes_place_labels"] = None
+        st.session_state["aes_max_labels"] = None
+        st.session_state["aes_min_population"] = None
+        return
+    names_text = st.text_area(
+        "Place names (one per line)",
+        value=st.session_state.get("aes_custom_names") or "",
+        key=f"aes_customnames_{rev}",
+        help="Each name is looked up in the gazetteer; pick the right "
+             "match below — city, region, and country are shown, so "
+             "“Rochester, New York” wins over “Rochester, Minnesota”.",
+    )
+    st.session_state["aes_custom_names"] = names_text
+    names = [ln.strip() for ln in names_text.splitlines() if ln.strip()]
+    chosen: List[Dict[str, Any]] = []
+    for i, name in enumerate(names):
+        try:
+            results = _gz.search(name, limit=5)
+        except Exception as exc:  # never break the UI on a search hiccup
+            st.warning(f"Search for {name!r} failed: {exc}")
+            continue
+        if not results:
+            st.warning(f"No gazetteer match for {name!r} — skipped.")
+            continue
+        options = [
+            f"{r['text']} — {r.get('adm1') or '?'}, "
+            f"{r.get('adm0') or '?'} ({r.get('kind')}, "
+            f"pop {(r.get('pop') or 0):,})"
+            for r in results
+        ]
+        pick = st.selectbox(
+            f"Match for {name!r}",
+            options=range(len(results)),
+            format_func=lambda k, _o=options: _o[k],
+            key=f"aes_custompick_{rev}_{i}",
+            help="Pick the right place — region and country included.",
+        )
+        chosen.append(results[pick])
+    if chosen:
+        st.caption(f"{len(chosen)} custom label(s) will be drawn.")
+    st.session_state["aes_place_labels"] = chosen or None
+    st.session_state["aes_max_labels"] = None
+    st.session_state["aes_min_population"] = None
 
 
 def _copy_look_section(viz, spec_dict: Dict[str, Any], categorical: bool,
@@ -1482,6 +1615,9 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
             subtitle=st.session_state.get("aes_subtitle"),
             encoding_line=bool(
                 st.session_state.get("aes_encoding_line", True)),
+            place_labels=st.session_state.get("aes_place_labels"),
+            max_labels=st.session_state.get("aes_max_labels"),
+            min_population=st.session_state.get("aes_min_population"),
             derived=_run_derived())
     except (pipeline.UnfetchableRegionError,
             pipeline.UnsupportedVariableError) as exc:

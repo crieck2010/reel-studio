@@ -26,6 +26,8 @@ inspectable reason it was chosen. No LLM is required at runtime.
 | [survey-derive](https://github.com/crieck2010/survey-derive) | Climatological anomaly products (optional) | v0.1.0 |
 | [survey-publish](https://github.com/crieck2010/survey-publish) | Social-media publishing: per-platform adapters + terminal OAuth connect (optional) | v0.1.0 |
 | [survey-timescales](https://github.com/crieck2010/survey-timescales) | Suggested time-window framing: season/cycle/event-density modes + reasons (optional) | v0.1.0 |
+| [survey-aesthetics](https://github.com/crieck2010/survey-aesthetics) | mapped.earth preset engine: LIC flow streaks, event glow, 3D prisms, editorial furniture (optional) | v0.1.0 |
+| [survey-gazetteer](https://github.com/crieck2010/survey-gazetteer) | Place-label gazetteer for the aesthetic preset path (optional) | v0.1.0 |
 | **reel-studio** (this repo) | Streamlit web app + UI-free pipeline orchestration | — |
 
 ## Supported data sources
@@ -116,8 +118,10 @@ Your browser opens to `http://localhost:8501` (paste it manually if it doesn't).
    only) — or paste a reel URL / upload a screenshot to copy its color mood.
    **mapped.earth presets** — Dark flow (LIC current/wind streaks), Dark glow
    (event glow with bloom), Paper prism (3D extrusion) — with frame rotation
-   (auto/manual), subtitle, watermark, and honesty-line controls (needs
-   survey-viz ≥ 0.22.0).
+   (auto/manual), subtitle, watermark, honesty-line controls, and **place
+   labels** (Off / Auto — gazetteer cities/towns, once per reel — / Custom
+   with name search and disambiguation; needs survey-viz ≥ 0.23.0 and the
+   survey-gazetteer peer).
    Press **Apply aesthetics** to store the spec that will run.
 4. **Cinematic motion & audio** — set zoom mode/speed, pan direction/speed, and
    crossfade smoothing; optionally attach your own audio file to mux under the reel

@@ -2,6 +2,36 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.16.0] - 2026-09-30
+
+### Added
+- **Place labels** (survey-viz >= 0.23.0, twelfth peer surface:
+  survey-gazetteer). Step 3 (Aesthetics) gains a **Place labels**
+  control group inside the preset section — **Off** / **Auto** /
+  **Custom**, every choice user-overridable per the standing
+  maximum-control rule:
+  - **Auto**: max-labels slider + min-population input; the
+    survey-gazetteer peer fetches city/town labels for the region once
+    per reel (Natural Earth 1:10m populated places). At the default
+    slider values nothing is passed — the survey-viz default (auto
+    labels when a preset is active) applies, so older peers keep
+    working untouched.
+  - **Custom**: place names, one per line, resolved via
+    `gazetteer.search()` with city + region + country disambiguation
+    shown in the UI so the user picks the right "Rochester"; names
+    with no match are skipped with a warning, never a crash.
+  - **Off**: no labels.
+- `run_pipeline()` accepts `place_labels`, `max_labels`, and
+  `min_population`; explicit choices ride in `render_viz_kwargs`, so
+  the survey-cache frame-batch fingerprint already covers them (label
+  changes invalidate the cache — proven by new fingerprint tests).
+  Older survey-viz peers raise `PeerTooOldError` with the upgrade
+  command instead of a traceback; defaults pass nothing, so legacy
+  runs are untouched. The label controls stay inert with an upgrade
+  hint when survey-viz < 0.23.0.
+- `Update reel-studio.bat` installs survey-gazetteer as the twelfth
+  peer (local checkout or GitHub) and prints its installed version.
+
 ## [0.15.0] - 2026-09-30
 
 ### Added
