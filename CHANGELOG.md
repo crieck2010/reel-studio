@@ -2,6 +2,62 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.20.0] - 2026-10-01
+
+### Added
+- **Autopilot (automatic first-pass)** orchestration in
+  `run_pipeline(..., autopilot=False, autopilot_candidates=None,
+  autopilot_qa_policy="drop")`, driven by the survey-autopilot engine
+  (v0.1.0, required — fail fast, never silently degrade):
+  1. **Phenomenon-aware stride before the fetch** — `(spec.variable,
+     source)` maps to a phenomenon (`wind`/`gfs-wind` → synoptic,
+     `current`/`currents`/`ofs-thredds`/`oscar` → tide,
+     `sst`/`seaice`/`sea-ice` → seasonal,
+     `quake`/`comcat`/`hurricane`/`ibtracs`/`fires`/`firms` → event,
+     `precip`/`imerg` → synoptic); the recommendation overrides the
+     caller's `stride_days`/`stride_hours` (original vs applied
+     recorded), and `forecast_hours` for `source="gfs-wind"` only.
+     Precedence: `autopilot.stride.recommend_stride`, then
+     `timescales.recommend_stride`, else `RuntimeError` with the
+     install hint. Unknown pairs keep the caller's strides and record
+     `{"via": "default", "reason": "no phenomenon mapping"}`.
+  2. **QA gate after the fetch** — the fetched dict is checked for
+     all-NaN / out-of-plausible-range timesteps and temporal gaps,
+     then repaired per `autopilot_qa_policy` (`"drop"` /
+     `"interpolate"` / `"fail"`; anything else is a `ValueError`,
+     `"fail"` lets the engine's `QAError` propagate). Works on the
+     `grids`/`times` dict form and on the normalized `values`/`times`
+     form (wrapped as a single grid, unwrapped after repair);
+     non-gridded fields (storm tracks, earthquake events,
+     streamgages) skip the gate with a recorded reason. Every QA
+     issue/action lands in `provenance["autopilot"]["qa"]`.
+  3. **Honest render knobs** — `robust_scale=True`,
+     `strand_count="auto"`, `salience_labels=True` (survey-viz >=
+     0.27.0), each guarded by signature inspection so older peers
+     skip with a record instead of breaking.
+  4. **Thumbnail composition search** — one first-timestep thumbnail
+     per candidate over the default `dark_strands`/`dark_flow` ×
+     `None`/`"auto"` × `void_black`/`subtle_land` grid (overridable
+     via `autopilot_candidates`), scored by the engine's
+     `search_composition`; the winner's preset/rotation/basemap feed
+     the full render, overriding manual choices at render time. A
+     failed candidate is recorded as `{"error": ...}` and excluded
+     from ranking; if every candidate fails, the last error is
+     raised.
+  5. **Provenance** — `provenance["autopilot"]` records phenomenon,
+     recommended vs applied stride, QA issues/actions, render knobs,
+     and the composition winner + full score table (JSON-safe).
+  `autopilot=False` (default) is byte-identical to 0.19.2: no new
+  kwargs are passed and the provenance carries no `"autopilot"` key.
+- **"Autopilot (automatic first-pass)" checkbox** (Step 3 ·
+  Aesthetics, default OFF). Manual preset/rotation/basemap widgets
+  stay enabled — autopilot overrides them at render time.
+- `tests/test_pipeline_autopilot.py`: 7 tests (stubbed engine, no
+  network) covering the byte-identical default, full orchestration
+  order, QA action recording, the fail-fast `RuntimeError`, bad
+  policy `ValueError`, `QAError` propagation on `"fail"`, and the
+  non-gridded skip path.
+
 ## [0.19.2] - 2026-10-01
 
 ### Added

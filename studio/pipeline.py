@@ -13,6 +13,8 @@ import hashlib
 import inspect
 import json
 import os
+import shutil
+import tempfile
 import types
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -189,6 +191,294 @@ def _supports_kw(func: Callable[..., Any], name: str) -> bool:
         return False
     return any(p.kind == inspect.Parameter.VAR_KEYWORD or p.name == name
                for p in params)
+
+
+#: survey-autopilot phenomenon mapping for the autopilot stride step.
+#: Keys match against ``spec.variable`` first, then the resolved source
+#: name (both lowercased); the first hit wins. Phenomena are the
+#: survey-autopilot ``STRIDE_TABLE`` keys ("synoptic" | "tide" |
+#: "seasonal" | "event"). Anything else keeps the caller's strides and is
+#: recorded as such — never guessed.
+_AUTOPILOT_PHENOMENA = {
+    "wind": "synoptic",
+    "gfs-wind": "synoptic",
+    "current": "tide",
+    "currents": "tide",
+    "ofs-thredds": "tide",
+    "oscar": "tide",
+    "sst": "seasonal",
+    "seaice": "seasonal",
+    "sea-ice": "seasonal",
+    "quake": "event",
+    "comcat": "event",
+    "hurricane": "event",
+    "ibtracs": "event",
+    "fires": "event",
+    "firms": "event",
+    "precip": "synoptic",
+    "imerg": "synoptic",
+}
+
+#: Default autopilot composition-search candidate grid (overridable per
+#: call via ``autopilot_candidates``). Basemap names are the survey-viz
+#: ``BASEMAP_STYLES`` tuple ("void_black", "no_basemap", "subtle_land");
+#: "void_black" + "subtle_land" bracket the look without the
+#: geography-free "no_basemap" outlier.
+_AUTOPILOT_DEFAULT_CANDIDATES = {
+    "presets": ["dark_strands", "dark_flow"],
+    "rotations": [None, "auto"],
+    "basemaps": ["void_black", "subtle_land"],
+}
+
+#: Repair policies the autopilot QA gate accepts ("fail" lets the
+#: engine's QAError propagate instead of repairing).
+_AUTOPILOT_QA_POLICIES = ("drop", "interpolate", "fail")
+
+#: survey-autopilot render knobs the pipeline sets for the automatic
+#: first pass (survey-viz >= 0.27.0). Each is guarded by _supports_kw so
+#: older peers skip honestly instead of breaking.
+_AUTOPILOT_RENDER_KNOBS = (
+    ("robust_scale", True),
+    ("strand_count", "auto"),
+    ("salience_labels", True),
+)
+
+#: pip hint used by the autopilot fail-fast RuntimeError.
+_AUTOPILOT_INSTALL_HINT = (
+    "pip install git+https://github.com/crieck2010/survey-autopilot.git")
+
+
+def _autopilot_phenomenon(variable: Any, source: Any) -> Optional[str]:
+    """Map ``(variable, source)`` to a survey-autopilot phenomenon.
+
+    Checks ``variable`` first, then ``source`` (both lowercased); the
+    first ``_AUTOPILOT_PHENOMENA`` hit wins, ``None`` when neither is
+    known (the caller keeps the default strides and records the skip).
+    """
+    for key in (str(variable or "").strip().lower(),
+                str(source or "").strip().lower()):
+        if key in _AUTOPILOT_PHENOMENA:
+            return _AUTOPILOT_PHENOMENA[key]
+    return None
+
+
+def _json_safe(value: Any) -> Any:
+    """Recursively convert numpy scalars/arrays to JSON-plain values."""
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return [_json_safe(v) for v in value.tolist()]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+def _autopilot_qa_gate(render_field: Any, qa_mod: Any,
+                       policy: str) -> Tuple[Any, Dict[str, Any]]:
+    """Run the survey-autopilot QA gate on the fetched render field.
+
+    The gate works on the dict form: fields whose dict carries
+    ``grids``/``times`` are checked directly; the normalized
+    ``_field_to_dict`` form (``values``/``times``) is wrapped as a
+    single ``_values`` grid for the check and unwrapped after repair.
+    Non-gridded fields (storm tracks, earthquake events, streamgages)
+    are skipped with a recorded reason — never crashed on.
+
+    Returns ``(field_dict, qa_record)``; ``field_dict`` keeps every key
+    the fetch produced (grids/times are the repaired versions, lats/lons
+    and the rest are untouched). With ``policy="fail"`` the engine's
+    :class:`QAError` propagates unchanged.
+    """
+    base = {"issues": [], "actions": [], "policy": policy}
+    if not isinstance(render_field, dict) or "times" not in render_field:
+        return render_field, dict(
+            base, status="skipped",
+            reason="render field is not a dict with a time axis")
+    if isinstance(render_field.get("grids"), dict):
+        qa_view: Dict[str, Any] = render_field
+        unwrap: Optional[str] = None
+    elif "values" in render_field:
+        qa_view = {"grids": {"_values": render_field["values"]},
+                   "times": render_field["times"]}
+        unwrap = "_values"
+    else:
+        return render_field, dict(
+            base, status="skipped",
+            reason=("field has no grids/values time axis — non-gridded "
+                    "field (event tracks, streamgages); QA skipped"))
+    report = qa_mod.qa_field(qa_view)
+    repaired, report = qa_mod.repair(report, qa_view, policy=policy)
+    merged = dict(render_field)
+    if unwrap is None:
+        merged["grids"] = repaired["grids"]
+    else:
+        merged["values"] = repaired["grids"][unwrap]
+    # Plain ISO strings again: repair returns a numpy array of whatever
+    # the fetch produced; downstream consumers (and the manifest)
+    # expect the list-of-strings form.
+    merged["times"] = [str(t) for t in list(repaired["times"])]
+    checked = list(getattr(report, "checked_vars", []) or [])
+    if unwrap is not None:
+        checked = [v for v in checked if v != unwrap]
+    return merged, {
+        "status": "ok" if getattr(report, "ok", False) else "repaired",
+        "ok": bool(getattr(report, "ok", False)),
+        "n_timesteps": int(getattr(report, "n_timesteps", 0) or 0),
+        "checked_vars": checked,
+        "issues": _json_safe(getattr(report, "issues", []) or []),
+        "actions": _json_safe(getattr(report, "actions", []) or []),
+        "policy": policy,
+    }
+
+
+def _slice_first_timestep(field_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Slice a render-field dict down to its first timestep.
+
+    Every key whose value is a time-first array with the same step count
+    as ``times`` is sliced to ``[0:1]`` (``grids`` sub-vars, ``values``,
+    ``air_temperature``); ``times`` is truncated to the first entry.
+    Keys that are not time-first (lats/lons, units, provenance, ...)
+    are left alone.
+    """
+    out = dict(field_dict)
+    times = field_dict.get("times")
+    n = len(list(times)) if times is not None else 0
+
+    def _sl(value: Any) -> Any:
+        try:
+            arr = np.asarray(value)
+        except (TypeError, ValueError):
+            return value
+        if n and arr.ndim >= 1 and arr.shape[0] == n:
+            return arr[0:1]
+        return value
+
+    if isinstance(out.get("grids"), dict):
+        out["grids"] = {k: _sl(v) for k, v in out["grids"].items()}
+    for key in ("values", "air_temperature"):
+        if key in out:
+            out[key] = _sl(out[key])
+    if times is not None:
+        out["times"] = list(times)[:1]
+    return out
+
+
+def _read_thumbnail_png(path: str) -> "np.ndarray":
+    """Read a rendered frame PNG into a numpy RGB array (float 0..1)."""
+    try:
+        import matplotlib.pyplot as plt
+        return np.asarray(plt.imread(path), dtype=np.float32)
+    except ImportError:
+        from PIL import Image
+        return (np.asarray(Image.open(path).convert("RGB"),
+                           dtype=np.float32) / 255.0)
+
+
+def _downsample_thumb(arr: "np.ndarray", width: int = 270) -> "np.ndarray":
+    """Crude nearest-neighbor downsample to ~``width`` px wide."""
+    a = np.asarray(arr)
+    h, w = a.shape[:2]
+    if w > width:
+        step = max(1, int(round(w / float(width))))
+        a = a[:, ::step]
+    return a
+
+
+def _autopilot_composition_search(
+        spec: Any, peers: Any, render_field: Dict[str, Any],
+        series_dict: Optional[Dict[str, Any]], out_dir: str,
+        candidates_cfg: Optional[Dict[str, Any]],
+        compose_mod: Any) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Thumbnail composition search over preset/rotation/basemap.
+
+    Renders one first-timestep thumbnail per candidate into a temp dir
+    (cleaned up afterwards), scores them with the engine's
+    ``search_composition``, and returns ``(winner, composition_record)``.
+    A candidate whose thumbnail render raises is recorded as
+    ``{"error": ...}`` in the score table and excluded from the
+    ranking; if *every* candidate fails, the last error is raised —
+    the failure is never re-ranked or hidden.
+    """
+    grid = dict(_AUTOPILOT_DEFAULT_CANDIDATES)
+    if candidates_cfg:
+        for key in ("presets", "rotations", "basemaps"):
+            if (candidates_cfg.get(key) is not None
+                    and list(candidates_cfg[key])):
+                grid[key] = list(candidates_cfg[key])
+    candidates = [
+        {"preset": preset, "rotation": rotation, "basemap": basemap}
+        for preset in grid["presets"]
+        for rotation in grid["rotations"]
+        for basemap in grid["basemaps"]
+    ]
+    thumb_field = _slice_first_timestep(render_field)
+    kw_ok = {
+        "preset": _supports_kw(peers.render_viz, "preset"),
+        "rotation": _supports_kw(peers.render_viz, "rotation"),
+        "basemap": _supports_kw(peers.render_viz, "basemap"),
+    }
+    thumb_root = tempfile.mkdtemp(prefix="autopilot-thumbs-", dir=out_dir)
+    errors: Dict[Tuple[Any, Any, Any], Exception] = {}
+    order: List[Tuple[Any, Any, Any]] = []
+    try:
+        def render_thumbnail(preset: Any, rotation: Any,
+                             basemap: Any) -> "np.ndarray":
+            key = (preset, rotation, basemap)
+            try:
+                thumb_dir = tempfile.mkdtemp(prefix="thumb-",
+                                             dir=thumb_root)
+                kwargs: Dict[str, Any] = {}
+                if kw_ok["preset"]:
+                    kwargs["preset"] = preset
+                if kw_ok["rotation"]:
+                    kwargs["rotation"] = rotation
+                if kw_ok["basemap"]:
+                    kwargs["basemap"] = basemap
+                frames, _manifest = peers.render_viz(
+                    spec, thumb_field, series_dict,
+                    out_dir=thumb_dir, **kwargs)
+                if not frames:
+                    raise RuntimeError(
+                        "thumbnail render returned no frames")
+                return _downsample_thumb(_read_thumbnail_png(frames[0]))
+            except Exception as exc:
+                # Recorded honestly and ranked out below: the engine's
+                # search_composition propagates callback exceptions, so
+                # the sentinel keeps one bad candidate from aborting the
+                # whole search while still scoring below any real
+                # thumbnail (all-black: total 0.125, the minimum).
+                errors[key] = exc
+                order.append(key)
+                return np.zeros((16, 16, 3), dtype=np.float32)
+
+        search = compose_mod.search_composition(render_thumbnail,
+                                                candidates)
+    finally:
+        shutil.rmtree(thumb_root, ignore_errors=True)
+    scores: List[Dict[str, Any]] = []
+    for entry in search.get("scores", []):
+        cand = dict(entry.get("candidate", {}) or {})
+        key = (cand.get("preset"), cand.get("rotation"),
+               cand.get("basemap"))
+        scored = dict(entry)
+        if key in errors:
+            exc = errors[key]
+            scored["error"] = f"{type(exc).__name__}: {exc}"
+        scores.append(scored)
+    ranked = [e for e in scores if "error" not in e]
+    if not ranked:
+        # Every candidate failed — raise the last error, never pick a
+        # failure as the "winner".
+        raise errors[order[-1]]
+    winner = dict(ranked[0]["candidate"])
+    return winner, {
+        "winner": winner,
+        "scores": _json_safe(scores),
+        "weights": _json_safe(search.get("weights")),
+        "n_candidates": int(search.get("n_candidates", len(scores))),
+    }
 
 
 #: Fields of survey-animate's ``MotionSpec`` (v0.2.0). The pipeline
@@ -1561,6 +1851,9 @@ def run_pipeline(
     forecast_hours: Optional[tuple] = None,
     ofs_code: Optional[str] = None,
     region_name: Optional[str] = None,
+    autopilot: bool = False,
+    autopilot_candidates: Optional[Dict[str, Any]] = None,
+    autopilot_qa_policy: str = "drop",
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -1772,6 +2065,41 @@ def run_pipeline(
             older peers keep working; needs survey-animate >= 0.3.0
             otherwise raises :class:`PeerTooOldError`. Fingerprinted
             into the encode-cache key via ``render_video_kwargs``.
+        autopilot: when True, the survey-autopilot engine drives the
+            automatic first pass in five steps: (1) a phenomenon-aware
+            frame stride is recommended *before* the fetch and
+            overrides the caller's ``stride_days``/``stride_hours``
+            (and ``forecast_hours`` for ``source="gfs-wind"`` only —
+            other sources keep the caller's hours); (2) the fetched
+            field is QA-gated (all-NaN / out-of-plausible-range
+            timesteps, temporal gaps) and repaired per
+            ``autopilot_qa_policy``; (3) honest render knobs are set
+            (``robust_scale=True``, ``strand_count="auto"``,
+            ``salience_labels=True``, each skipped with a record when
+            the survey-viz peer is older than 0.27.0); (4) a
+            thumbnail-based composition search picks the winning
+            preset/rotation/basemap for the full render, overriding
+            manual preset/rotation/basemap choices at render time;
+            (5) everything is recorded under
+            ``provenance["autopilot"]`` (phenomenon, recommended vs
+            applied stride, QA issues/actions, render knobs, the
+            composition winner and full score table). Requires the
+            survey-autopilot package — when it (and the survey-timescales
+            fallback) cannot be imported, raises ``RuntimeError``
+            instead of silently degrading. ``False`` (default) is
+            byte-identical to the pre-autopilot pipeline: no new kwargs
+            are passed and the provenance carries no ``"autopilot"``
+            key.
+        autopilot_candidates: overrides for the autopilot composition
+            grid — ``{"presets": [...], "rotations": [...],
+            "basemaps": [...]}``; any key left out (or empty) keeps the
+            default (``dark_strands``/``dark_flow`` × ``None``/``"auto"``
+            × ``void_black``/``subtle_land``). Ignored unless
+            ``autopilot=True``.
+        autopilot_qa_policy: QA repair policy — ``"drop"`` (default),
+            ``"interpolate"``, or ``"fail"`` (lets the engine's
+            ``QAError`` propagate instead of repairing). Anything else
+            raises ``ValueError``. Ignored unless ``autopilot=True``.
 
     Raises:
         UnfetchableRegionError / UnsupportedVariableError: honest,
@@ -1781,7 +2109,11 @@ def run_pipeline(
         ValueError: ``audio_path`` given but not a file; malformed
             ``derived``; ``derived`` requested for an ineligible source;
             malformed ``forecast_hours``; ``forecast_hours`` given for a
-            non-GFS source; ``source="ofs-thredds"`` without ``ofs_code``.
+            non-GFS source; ``source="ofs-thredds"`` without ``ofs_code``;
+            bad ``autopilot_qa_policy`` with ``autopilot=True``.
+        RuntimeError: ``autopilot=True`` with neither the survey-autopilot
+            package nor the survey-timescales fallback importable
+            (fail fast — never silently degrade the flagship path).
     """
     def report(frac: float, message: str) -> None:
         if progress is not None:
@@ -1801,6 +2133,44 @@ def run_pipeline(
             f"audio_path does not exist: {audio_path!r}. Pick a file "
             "that is on this machine — the reel is 100% local, so the "
             "audio must be a local file too.")
+
+    # -- autopilot: fail fast before any work --------------------------------
+    # The flagship automatic-first-pass path needs the survey-autopilot
+    # engine (stride recommendation + QA gate + composition search).
+    # When autopilot=False none of this runs and the pipeline is
+    # byte-identical to the pre-autopilot behavior. The imports are lazy
+    # (module top-level must stay importable without the engine, and
+    # tests stub the modules via sys.modules).
+    _ap_stride_fn: Optional[Callable[..., Dict[str, Any]]] = None
+    _ap_stride_via: Optional[str] = None
+    _ap_qa: Any = None
+    _ap_compose: Any = None
+    if autopilot:
+        if autopilot_qa_policy not in _AUTOPILOT_QA_POLICIES:
+            raise ValueError(
+                f"unknown autopilot_qa_policy {autopilot_qa_policy!r}; "
+                f"valid: {', '.join(_AUTOPILOT_QA_POLICIES)}")
+        try:
+            from autopilot import stride as _ap_stride_mod
+            _ap_stride_fn = _ap_stride_mod.recommend_stride
+            _ap_stride_via = "survey-autopilot"
+        except ImportError:
+            try:
+                import timescales as _ap_timescales_mod
+                _ap_stride_fn = _ap_timescales_mod.recommend_stride
+                _ap_stride_via = "survey-timescales"
+            except (ImportError, AttributeError):
+                _ap_stride_fn = None
+        try:
+            from autopilot import qa as _ap_qa_mod
+            from autopilot import compose as _ap_compose_mod
+            _ap_qa, _ap_compose = _ap_qa_mod, _ap_compose_mod
+        except ImportError:
+            _ap_qa, _ap_compose = None, None
+        if _ap_stride_fn is None or _ap_qa is None or _ap_compose is None:
+            raise RuntimeError(
+                "autopilot=True needs the survey-autopilot package: "
+                f"{_AUTOPILOT_INSTALL_HINT}")
 
     # -- capability checks (fail fast, with upgrade guidance) ---------------
     # Signature inspection, not version strings, so test doubles and
@@ -1983,6 +2353,70 @@ def run_pipeline(
             raise ValueError(
                 "forecast_hours is only supported for source "
                 f"'gfs-wind', got source '{source}'.")
+
+    # -- autopilot: phenomenon-aware stride (before fetch) -------------------
+    # The engine recommends a frame stride for the phenomenon behind
+    # (spec.variable, source); the recommendation overrides the
+    # caller's stride_days/stride_hours (original vs applied is
+    # recorded). forecast_hours is overridden only for source
+    # "gfs-wind" — the GFS-only validation above already refuses it
+    # for every other source, and that logic is reused here, not
+    # duplicated. Unknown (variable, source) pairs keep the caller's
+    # strides and record the skip.
+    autopilot_record: Dict[str, Any] = {"enabled": False}
+    if autopilot:
+        report(0.04, "Autopilot: picking a phenomenon-aware stride…")
+        phenomenon = _autopilot_phenomenon(spec.variable, source)
+        stride_original = {
+            "stride_days": stride_days,
+            "stride_hours": stride_hours,
+            "forecast_hours": (list(forecast_hours)
+                               if forecast_hours is not None else None),
+        }
+        if phenomenon is None:
+            autopilot_record = {
+                "enabled": True,
+                "phenomenon": None,
+                "stride": {
+                    "via": "default",
+                    "reason": "no phenomenon mapping",
+                    "recommended": None,
+                    "original": stride_original,
+                    "applied": dict(stride_original),
+                },
+            }
+        else:
+            assert _ap_stride_fn is not None  # fail-fast above guarantees
+            rec = _ap_stride_fn(phenomenon, source=source)
+            stride_days = int(rec["stride_days"])
+            stride_hours = int(rec["stride_hours"])
+            fh_reason: Optional[str] = None
+            if rec.get("forecast_hours") is not None:
+                if source == "gfs-wind":
+                    forecast_hours = tuple(
+                        int(h) for h in rec["forecast_hours"])
+                else:
+                    fh_reason = ("recommended forecast_hours skipped: "
+                                 "only source 'gfs-wind' accepts "
+                                 "forecast_hours")
+            autopilot_record = {
+                "enabled": True,
+                "phenomenon": phenomenon,
+                "stride": {
+                    "via": _ap_stride_via,
+                    "reason": rec.get("reason"),
+                    "recommended": _json_safe(rec),
+                    "original": stride_original,
+                    "applied": {
+                        "stride_days": stride_days,
+                        "stride_hours": stride_hours,
+                        "forecast_hours": (list(forecast_hours)
+                                           if forecast_hours is not None
+                                           else None),
+                    },
+                    "forecast_hours_reason": fh_reason,
+                },
+            }
 
     # -- 1. fetch -----------------------------------------------------------
     clamp_notes: List[str] = []
@@ -2683,6 +3117,19 @@ def run_pipeline(
     render_field = (render_dict if render_dict is not None
                     else _field_to_dict(field))
     series_dict = _series_to_dict(series)
+    # -- autopilot: QA gate on the fetched field ------------------------------
+    # Runs on the dict form the render path already uses (grids/times
+    # directly, or the normalized values/times form wrapped as a single
+    # grid). The repaired dict flows into the render path; non-gridded
+    # fields (storm tracks, earthquake events, streamgages) are skipped
+    # with a recorded reason. policy="fail" lets the engine's QAError
+    # propagate instead of repairing.
+    if autopilot:
+        assert _ap_qa is not None  # fail-fast above guarantees
+        report(0.49, "Autopilot: QA-gating the fetched field…")
+        render_field, qa_record = _autopilot_qa_gate(
+            render_field, _ap_qa, autopilot_qa_policy)
+        autopilot_record["qa"] = qa_record
     # -- narrative story facts (survey-narrate peer, optional) -----------------
     # Computed from the fetched field; never fails the render. Attached
     # to RunResult.story and the run manifest so callers (e.g. the daily
@@ -2815,6 +3262,49 @@ def run_pipeline(
             "note": derived_note,
             "engine": "survey-derive",
         }
+    # -- autopilot: render knobs + composition search -------------------------
+    # Honest render knobs first (each guarded so older survey-viz peers
+    # skip without breaking), then the thumbnail composition search over
+    # preset/rotation/basemap — the winner overrides the manual
+    # preset/rotation/basemap choices in render_viz_kwargs for the full
+    # render. Runs after the derived-products block so the search sees
+    # exactly what the full render will see, and before the cache
+    # section so the winning look is part of the frame-batch
+    # fingerprint.
+    if autopilot:
+        assert _ap_compose is not None  # fail-fast above guarantees
+        knobs_record: Dict[str, Any] = {}
+        for knob_name, knob_value in _AUTOPILOT_RENDER_KNOBS:
+            if _supports_kw(peers.render_viz, knob_name):
+                render_viz_kwargs[knob_name] = knob_value
+                knobs_record[knob_name] = {"applied": knob_value}
+            else:
+                knobs_record[knob_name] = {
+                    "applied": None,
+                    "reason": ("skipped for older survey-viz peer "
+                               "(kwarg unsupported)"),
+                }
+        autopilot_record["render_knobs"] = knobs_record
+        report(0.495, "Autopilot: searching composition over thumbnails…")
+        winner, composition_record = _autopilot_composition_search(
+            spec, peers, render_field, series_dict, out_dir,
+            autopilot_candidates, _ap_compose)
+        autopilot_record["composition"] = composition_record
+        # The winner's preset/rotation/basemap feed the FULL render.
+        # Guarded like the knobs: a peer that cannot take them skips
+        # with a record instead of breaking.
+        for knob in ("preset", "rotation", "basemap"):
+            value = winner.get(knob)
+            if value is None:
+                continue
+            if _supports_kw(peers.render_viz, knob):
+                render_viz_kwargs[knob] = value
+            else:
+                autopilot_record["composition"].setdefault(
+                    "skipped_knobs", []).append(
+                    {"knob": knob, "value": value,
+                     "reason": ("skipped for older survey-viz peer "
+                                "(kwarg unsupported)")})
     # -- render cache (survey-cache peer, optional) ---------------------------
     # The frame batch is keyed by a fingerprint of everything that can
     # change the pixels: the spec, digests of the fetched arrays, the
@@ -2966,6 +3456,11 @@ def run_pipeline(
         "story": story,
         "cache": cache_report,
     }
+    # Autopilot only: the manual path keeps no "autopilot" key at all,
+    # so old and new runs stay distinguishable (and byte-identical
+    # when autopilot=False).
+    if autopilot:
+        provenance["autopilot"] = autopilot_record
 
     return RunResult(
         video_path=os.path.abspath(video_path),

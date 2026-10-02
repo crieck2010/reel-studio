@@ -270,6 +270,31 @@ The app works **fully** without the key — it is never required. See
   zoom mode/speed, pan direction/speed, and crossfade smoothing; attach
   your own audio file to mux under the reel (needs survey-animate ≥
   0.2.0).
+* **Autopilot (automatic first-pass)** — one checkbox in Step 3 that
+  lets the survey-autopilot engine drive the first pass, end to end:
+  1. a **phenomenon-aware frame stride** is recommended *before* the
+     fetch (`wind`/`gfs-wind` → synoptic, `current(s)`/`ofs-thredds`/
+     `oscar` → tide, `sst`/`seaice` → seasonal, quake/hurricane/fires
+     → event, `precip`/`imerg` → synoptic) and overrides your stride
+     settings (original vs applied is recorded);
+  2. the fetched field passes a **QA gate** — all-NaN or
+     out-of-plausible-range timesteps and temporal gaps are detected
+     and repaired (drop policy), with every issue and action recorded;
+  3. **honest render knobs** are set (`robust_scale=True`,
+     `strand_count="auto"`, `salience_labels=True` — needs survey-viz
+     ≥ 0.27.0; older peers skip them without breaking);
+  4. a **thumbnail composition search** renders one first-timestep
+     thumbnail per preset/rotation/basemap candidate and scores them,
+     so the full render uses the winning look — overriding your manual
+     preset/rotation/basemap choices at render time (the widgets stay
+     enabled; autopilot just wins);
+  5. everything is recorded under `provenance["autopilot"]` in the run
+     manifest (phenomenon, recommended vs applied stride, QA
+     issues/actions, render knobs, composition winner + score table).
+  Autopilot needs the survey-autopilot package — the run **refuses
+  honestly** (`RuntimeError` with the install command) if it (and the
+  survey-timescales fallback) is missing; it never silently degrades.
+  Off by default; off is byte-identical to the manual pipeline.
 * **Step 5 — Batch queue** — add several descriptions (one per line),
   each snapshotting your current settings (motion, audio, captions,
   colormap, platform), and generate them unattended, one after another.

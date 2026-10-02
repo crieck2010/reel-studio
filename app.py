@@ -678,6 +678,35 @@ def _aesthetic_preset_section(status, spec_dict: Dict[str, Any], rev: int) -> No
 
     _place_labels_section(status, spec_dict, rev)
     _basemap_strands_section(status, rev)
+    _autopilot_section(rev)
+
+
+def _autopilot_section(rev: int) -> None:
+    """Autopilot (automatic first-pass) — pipeline-level orchestration.
+
+    Not gated on any peer version: when the survey-autopilot engine is
+    missing the run refuses honestly (fail fast) instead of rendering a
+    degraded reel. Manual preset/rotation/basemap widgets stay enabled —
+    autopilot overrides them at render time (see the help text).
+    """
+    st.divider()
+    st.markdown("**Autopilot**")
+    auto = st.checkbox(
+        "Autopilot (automatic first-pass)",
+        value=bool(st.session_state.get("autopilot", False)),
+        key=f"autopilot_{rev}",
+        help="Let the survey-autopilot engine drive the first pass: "
+             "a phenomenon-aware frame stride before the fetch, a QA "
+             "gate on the fetched field (bad timesteps dropped per the "
+             "drop policy), honest render knobs (robust scaling, auto "
+             "strand count, salient labels), and a thumbnail-based "
+             "composition search that picks the winning "
+             "preset/rotation/basemap. Manual preset/rotation/basemap "
+             "choices stay enabled but autopilot overrides them at "
+             "render time. Needs the survey-autopilot package — the run "
+             "refuses honestly if it is missing.",
+    )
+    st.session_state["autopilot"] = auto
 
 
 def _place_labels_section(status, spec_dict: Dict[str, Any], rev: int) -> None:
@@ -1738,6 +1767,7 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
             strand_linewidth=st.session_state.get("aes_strand_linewidth"),
             landmask=st.session_state.get("aes_landmask"),
             bivariate=st.session_state.get("aes_bivariate"),
+            autopilot=bool(st.session_state.get("autopilot", False)),
             derived=_run_derived())
     except (pipeline.UnfetchableRegionError,
             pipeline.UnsupportedVariableError) as exc:
