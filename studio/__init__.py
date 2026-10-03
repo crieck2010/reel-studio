@@ -7,6 +7,6 @@ survey-cache, survey-derive, survey-publish) are optional and never
 hard-imported.
 """
 
-__version__ = "0.20.0"
+__version__ = "0.20.1"
 
 __all__ = ["__version__"]

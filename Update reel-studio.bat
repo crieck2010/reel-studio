@@ -14,6 +14,13 @@ REM  3. prints the installed peer versions for confirmation
 REM
 REM  Run this any time a new reel-studio or survey-viz release is
 REM  announced, then launch with the "Reel Studio" desktop icon.
+REM
+REM  NOTE: pulls run with `git -c gc.auto=0`. On Windows, git's
+REM  automatic housekeeping (gc) can hang forever on an interactive
+REM  "Deletion of directory .git\objects\... failed, try again? (y/n)"
+REM  prompt when OneDrive or Defender holds a lock on .git. Disabling
+REM  auto-gc for these pulls keeps the update non-interactive; run
+REM  `git gc` by hand occasionally if a repo feels slow.
 REM =====================================================================
 setlocal
 cd /d "%~dp0"
@@ -28,14 +35,14 @@ if errorlevel 1 (
 )
 
 echo === reel-studio ===
-git pull --ff-only
+git -c gc.auto=0 pull --ff-only
 if errorlevel 1 echo WARNING: git pull failed for reel-studio - continuing anyway.
 echo.
 
 for %%P in (survey-viz survey-currents survey-animate survey-layout survey-style survey-schedule survey-cache survey-derive survey-publish survey-timescales survey-aesthetics survey-gazetteer) do (
     if exist "..\%%P\.git" (
         echo === %%P  [local checkout] ===
-        git -C "..\%%P" pull --ff-only
+        git -C "..\%%P" -c gc.auto=0 pull --ff-only
         if errorlevel 1 echo WARNING: git pull failed for %%P - reinstalling from the checkout anyway.
         python -m pip install --upgrade "..\%%P"
     ) else (

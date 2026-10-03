@@ -2,6 +2,17 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.20.1] - 2026-10-03
+
+### Fixed
+- `Update reel-studio.bat` no longer hangs on an interactive
+  "Deletion of directory .git\objects\... failed, try again? (y/n)"
+  prompt. On Windows, `git pull`'s automatic `gc` can block forever
+  when OneDrive or Defender holds a lock on `.git` files. All pulls in
+  the updater now run with `git -c gc.auto=0`, keeping the update
+  fully non-interactive. (Housekeeping can still be run by hand with
+  `git gc` whenever needed.)
+
 ## [0.20.0] - 2026-10-01
 
 ### Added
