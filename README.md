@@ -383,7 +383,9 @@ pytest tests/
 The suite covers the UI-free pipeline (`studio/pipeline.py`), the batch
 queue (`studio/batch.py`), peer wiring with graceful degradation, source
 selection, provenance, and the offline demo. Fresh-clone verified
-against the released peers: 290 passed.
+against the released peers: 558 passed (v0.21.0 fresh-clone verified;
+3 failed + 12 errors pre-exist on v0.20.1 — publish-schedule peer
+missing from the test venv and two updater `.bat` assertions).
 
 ## Manual smoke check
 
