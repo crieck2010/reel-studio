@@ -2,6 +2,67 @@
 
 All notable changes to reel-studio. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.21.0] - 2026-10-04
+
+### Added
+- **Surface preset wiring (survey-viz 0.28.0)** — `run_pipeline` now
+  accepts `surface_contours` (default `True`), `surface_contour_levels`
+  (`None` = auto), `surface_shadow` (`True`), `surface_smoothing`
+  (`0.0` = off), and `surface_scale` (`"linear"` / `"log"`), plus
+  `counter` (a `{"stat", "unit", "label"}` dict passed through
+  verbatim; viz validates it and records it not-applied off the
+  Surface preset) and `headline_beats` (a list of
+  `(fraction_or_iso_timestamp, text)` pairs). The `"surface"` preset
+  itself flows through the existing `aesthetic_preset` parameter.
+  Every new kwarg is forwarded only when the installed viz supports
+  it (signature inspection via the existing `_supports_kw` pattern):
+  older peers keep working, unsupported values are dropped, and the
+  drop is recorded under `provenance["render"]["surface" | "counter"
+  | "headline_beats"]`. At all-defaults nothing is forwarded and no
+  provenance keys appear — defaults-off output is byte-identical to
+  v0.20.1.
+- **`headline_beats="auto"`** — drafts beats from the fetched field via
+  the optional survey-narrate peer (`story_facts` +
+  `headline_beats`, reusing the run's already-computed story facts
+  when available). These are **drafts for human approval/editing —
+  they restate computed facts only**. On any failure (peer missing,
+  facts malformed, viz too old) the run proceeds with no beats and
+  records `status: "fallback"` / `fallback: true` in provenance;
+  beats are never fabricated.
+- **App UI (Step 3 · Aesthetics)** — when the Surface preset is
+  picked: Surface contours / Surface shadow toggles, Surface
+  smoothing slider (0.0 default), Surface scale select (linear/log),
+  and a Contour levels text field (comma-separated floats, empty =
+  auto). A **Counter & headline beats** block adds the Counter toggle
+  (off by default) with stat picker (sum/mean/max) and unit/label
+  fields, a multiline headline-beats field
+  (`fraction|text`, e.g. `0.0|Opening headline`), and an
+  **Auto-draft headline beats** checkbox with an inline note that auto
+  beats are survey-narrate drafts for review/editing. New headless-safe
+  parsers `parse_headline_beats_text` / `parse_contour_levels_text`
+  raise `ValueError` naming the bad line/entry; the Run step warns and
+  falls back to `None` instead of crashing. Peers older than
+  survey-viz 0.28.0 show the upgrade hint and the new controls stay
+  inert.
+
+### Fixed
+- Version drift: `app.py` `APP_VERSION` was stuck at `0.17.0`; it now
+  matches `studio.__version__` (`0.21.0`). There is no `pyproject.toml`
+  in this repo (install is via `requirements.txt` + editable peers);
+  the only version strings are `studio/__init__.py` and `app.py`.
+
+### Tests
+- New `tests/test_pipeline_surface.py` (11 tests: pass-through of
+  every new kwarg, counter verbatim, explicit beats, defaults-off
+  byte-identity on strict and new peers, old-peer drop+record,
+  auto-beats with/without/broken narrate) and
+  `tests/test_surface_ui.py` (20 tests: beat/level parsers incl.
+  blank lines, malformed lines, out-of-range fractions; surface and
+  counter/headline sections on new and old peers via a Streamlit
+  stub). Dev tree: 558 passed, with the same 3 failed + 12 errors
+  that pre-exist on v0.20.1 (publish-schedule peer missing from the
+  test venv; two updater `.bat` assertions) — no new failures.
+
 ## [0.20.1] - 2026-10-03
 
 ### Fixed

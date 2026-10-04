@@ -17,7 +17,7 @@ inspectable reason it was chosen. No LLM is required at runtime.
 | Repo | Role | Version tested |
 |---|---|---|
 | [survey-currents](https://github.com/crieck2010/survey-currents) | Data-fetch engines for all 15 sources | v0.18.0 |
-| [survey-viz](https://github.com/crieck2010/survey-viz) | Description parser + reel frame renderer | v0.26.0 |
+| [survey-viz](https://github.com/crieck2010/survey-viz) | Description parser + reel frame renderer | v0.28.0 |
 | [survey-animate](https://github.com/crieck2010/survey-animate) | Frames → MP4 encoder (resolves ffmpeg) | v0.2.0 |
 | [survey-layout](https://github.com/crieck2010/survey-layout) | Platform aspect ratios + safe-zone canvases (optional) | v0.1.0 |
 | [survey-style](https://github.com/crieck2010/survey-style) | Reusable style presets for the Aesthetics step (optional) | v0.1.0 |
@@ -26,7 +26,8 @@ inspectable reason it was chosen. No LLM is required at runtime.
 | [survey-derive](https://github.com/crieck2010/survey-derive) | Climatological anomaly products (optional) | v0.1.0 |
 | [survey-publish](https://github.com/crieck2010/survey-publish) | Social-media publishing: per-platform adapters + terminal OAuth connect (optional) | v0.1.0 |
 | [survey-timescales](https://github.com/crieck2010/survey-timescales) | Suggested time-window framing: season/cycle/event-density modes + reasons (optional) | v0.1.0 |
-| [survey-aesthetics](https://github.com/crieck2010/survey-aesthetics) | mapped.earth preset engine: LIC flow streaks, event glow, 3D prisms, advected strands, basemap styles, editorial furniture (optional) | v0.2.0 |
+| [survey-aesthetics](https://github.com/crieck2010/survey-aesthetics) | mapped.earth preset engine: LIC flow streaks, event glow, 3D prisms, advected strands, basemap styles, editorial furniture, colored scalar surface (optional) | v0.4.0 |
+| [survey-narrate](https://github.com/crieck2010/survey-narrate) | Data-computed story facts → captions and draft headline beats (optional) | v0.2.0 |
 | [survey-gazetteer](https://github.com/crieck2010/survey-gazetteer) | Place-label gazetteer for the aesthetic preset path (optional) | v0.1.0 |
 | **reel-studio** (this repo) | Streamlit web app + UI-free pipeline orchestration | — |
 
@@ -118,11 +119,17 @@ Your browser opens to `http://localhost:8501` (paste it manually if it doesn't).
    caption, toggle the basemap underlay, and choose a colormap (continuous data maps
    only) — or paste a reel URL / upload a screenshot to copy its color mood.
    **mapped.earth presets** — Dark flow (LIC current/wind streaks), Dark glow
-   (event glow with bloom), Paper prism (3D extrusion) — with frame rotation
+   (event glow with bloom), Paper prism (3D extrusion), Dark strands, and
+   **Surface** (colored scalar surface over shadowed land; contours, shadow,
+   smoothing, linear/log scale, optional contour levels — needs survey-viz
+   ≥ 0.28.0) — with frame rotation
    (auto/manual), subtitle, watermark, honesty-line controls, and **place
    labels** (Off / Auto — gazetteer cities/towns, once per reel — / Custom
    with name search and disambiguation; needs survey-viz ≥ 0.23.0 and the
-   survey-gazetteer peer).
+   survey-gazetteer peer). The Surface preset also unlocks the **Counter**
+   (animated date + running sum/mean/max stat) and **headline beats**
+   (`fraction|text` lines, or auto-drafted by survey-narrate for human
+   review — see Step 3 below).
    Press **Apply aesthetics** to store the spec that will run.
 4. **Cinematic motion & audio** — set zoom mode/speed, pan direction/speed, and
    crossfade smoothing; optionally attach your own audio file to mux under the reel
@@ -266,6 +273,31 @@ The app works **fully** without the key — it is never required. See
   variable/preset and preset/platform-canvas combinations warn or fail
   fast with plain-words reasons. The preset is part of the render
   fingerprint, so changing it invalidates the frame cache.
+  **Surface preset** (needs survey-viz ≥ 0.28.0 + survey-aesthetics
+  ≥ 0.4.0) — a colored scalar surface over shadowed land, with its own
+  controls shown when the preset is picked: **Surface contours** and
+  **Surface shadow** toggles, **Surface smoothing** (Gaussian sigma in
+  output pixels, 0 = off), **Surface scale** (Linear / Log — log gives
+  log-spaced colorbar ticks for density-like data), and **Contour
+  levels** (comma-separated floats, e.g. `0, 5, 10`; empty = auto
+  data-driven levels). **Counter & headline beats** (also survey-viz
+  ≥ 0.28.0): the **Counter** toggle (off by default) adds the animated
+  big date readout + running stat on the Surface preset — pick the
+  stat (sum / mean / max) and set unit and label; viz records it as
+  not-applied on other presets. **Headline beats** swap the title at
+  timed moments: one beat per line in the format `fraction|text`
+  (e.g. `0.0|Opening headline`, `0.6|The north pulls ahead`); an empty
+  field means no beats, and malformed lines warn instead of crashing
+  the run. Checking **Auto-draft headline beats** sends
+  `headline_beats="auto"`: the survey-narrate peer drafts beats from
+  the fetched field's computed story facts. **Auto beats are drafts
+  for review/editing — a human approves/edits them before use; they
+  restate computed facts only, and the pipeline never fabricates
+  beats** (if narrate is missing or the facts fail, the run proceeds
+  with no beats and records the fallback in provenance). On older
+  survey-viz peers all of these controls stay inert and any requested
+  values are dropped with the drop recorded in the run manifest —
+  never a crash.
 * **Step 4 — Cinematic motion & audio** — enable camera motion and set
   zoom mode/speed, pan direction/speed, and crossfade smoothing; attach
   your own audio file to mux under the reel (needs survey-animate ≥

@@ -1854,6 +1854,13 @@ def run_pipeline(
     autopilot: bool = False,
     autopilot_candidates: Optional[Dict[str, Any]] = None,
     autopilot_qa_policy: str = "drop",
+    surface_contours: bool = True,
+    surface_contour_levels: Optional[List[float]] = None,
+    surface_shadow: bool = True,
+    surface_smoothing: float = 0.0,
+    surface_scale: str = "linear",
+    counter: Optional[Dict[str, Any]] = None,
+    headline_beats: Any = None,
 ) -> RunResult:
     """Run the full fetch -> render -> encode pipeline for ``spec``.
 
@@ -2100,6 +2107,39 @@ def run_pipeline(
             ``"interpolate"``, or ``"fail"`` (lets the engine's
             ``QAError`` propagate instead of repairing). Anything else
             raises ``ValueError``. Ignored unless ``autopilot=True``.
+        surface_contours: draw contour lines on the ``surface`` preset
+            (survey-viz >= 0.28.0). ``True`` (default) keeps the peer
+            default and is never passed alone, so older peers keep
+            working untouched. Any non-default value is forwarded only
+            when the peer supports it; otherwise it is dropped and
+            recorded in provenance. Part of the frame-batch fingerprint.
+        surface_contour_levels: explicit contour levels for the
+            ``surface`` preset (list of floats) or ``None`` (default)
+            for auto data-driven levels. Forwarded only when set and
+            supported.
+        surface_shadow: draw the shadowed land/footprint silhouette
+            under the ``surface`` preset. ``True`` (default) keeps the
+            peer default.
+        surface_smoothing: Gaussian smoothing sigma in output pixels
+            for the ``surface`` preset (``0.0`` = off, the default).
+        surface_scale: color scale for the ``surface`` preset —
+            ``"linear"`` (default) or ``"log"`` (log-spaced colorbar
+            ticks for density-like data).
+        counter: optional running counter for the ``surface`` preset,
+            e.g. ``{"stat": "sum", "unit": "km²", "label": "Area"}``.
+            ``None`` (default) disables it and is never passed. When
+            set, the dict is forwarded verbatim (viz validates it); on
+            non-surface presets viz records it as not-applied.
+        headline_beats: optional title-swap beats — a list of
+            ``(fraction_or_iso_timestamp, text)`` pairs, or the string
+            ``"auto"`` to draft beats from the fetched field via the
+            survey-narrate peer (``narrate.story_facts`` +
+            ``narrate.headline_beats``). ``None`` (default) disables
+            beats. ``"auto"`` drafts are computed from the field only;
+            on any failure (peer missing, facts malformed) it falls
+            back to no beats and records ``headline_beats.fallback``
+            in provenance — never fabricates beats. Explicit lists pass
+            through unchanged (viz validates before rendering).
 
     Raises:
         UnfetchableRegionError / UnsupportedVariableError: honest,
@@ -2260,6 +2300,106 @@ def run_pipeline(
             render_viz_kwargs["landmask"] = landmask
         if bivariate is not None:
             render_viz_kwargs["bivariate"] = bivariate
+
+    # Surface preset + counter + headline beats (survey-viz >= 0.28.0):
+    # forwarded only when the peer supports each kwarg (signature
+    # inspection via _supports_kw). Unsupported kwargs are dropped —
+    # never raised — and the drop is recorded in provenance so the run
+    # stays honest about what was asked vs applied. Defaults-off is
+    # byte-identical: when every surface option is at its default,
+    # counter is None, and headline_beats is None, nothing is added to
+    # render_viz_kwargs and no provenance keys appear.
+    _surface_defaults = {
+        "surface_contours": True,
+        "surface_contour_levels": None,
+        "surface_shadow": True,
+        "surface_smoothing": 0.0,
+        "surface_scale": "linear",
+    }
+    _surface_requested = {
+        "surface_contours": surface_contours,
+        "surface_contour_levels": surface_contour_levels,
+        "surface_shadow": surface_shadow,
+        "surface_smoothing": surface_smoothing,
+        "surface_scale": surface_scale,
+    }
+    _surface_is_default = (
+        surface_contours is True
+        and surface_contour_levels is None
+        and surface_shadow is True
+        and surface_smoothing == 0.0
+        and surface_scale == "linear"
+    )
+    surface_record: Dict[str, Any] = {}
+    _surface_applied: Dict[str, Any] = {}
+    _surface_dropped: List[str] = []
+    if aesthetic_preset == "surface" or not _surface_is_default:
+        for _k, _v in _surface_requested.items():
+            # Only forward non-default values; defaults let the peer
+            # use its own defaults (identical pixels, smaller cache key).
+            if _v == _surface_defaults[_k]:
+                continue
+            if _supports_kw(peers.render_viz, _k):
+                render_viz_kwargs[_k] = _v
+                _surface_applied[_k] = _v
+            else:
+                _surface_dropped.append(_k)
+        if aesthetic_preset == "surface" or _surface_applied or _surface_dropped:
+            surface_record = {
+                "preset": aesthetic_preset,
+                "requested": _json_safe(_surface_requested),
+                "applied": _json_safe(_surface_applied),
+                "dropped": list(_surface_dropped),
+            }
+            if _surface_dropped:
+                surface_record["reason"] = (
+                    "survey-viz peer does not support surface kwargs "
+                    "(needs >= 0.28.0); dropped")
+    counter_record: Dict[str, Any] = {}
+    if counter is not None:
+        if _supports_kw(peers.render_viz, "counter"):
+            render_viz_kwargs["counter"] = counter
+            counter_record = {
+                "requested": _json_safe(counter),
+                "applied": True,
+                "dropped": False,
+            }
+        else:
+            counter_record = {
+                "requested": _json_safe(counter),
+                "applied": False,
+                "dropped": True,
+                "reason": ("survey-viz peer does not support counter "
+                           "(needs >= 0.28.0); dropped"),
+            }
+    headline_beats_record: Dict[str, Any] = {}
+    headline_beats_resolved: Any = headline_beats
+    if headline_beats is not None and headline_beats != "auto":
+        if _supports_kw(peers.render_viz, "headline_beats"):
+            render_viz_kwargs["headline_beats"] = headline_beats
+            headline_beats_record = {
+                "requested": _json_safe(headline_beats),
+                "mode": "explicit",
+                "applied": True,
+                "dropped": False,
+            }
+        else:
+            headline_beats_record = {
+                "requested": _json_safe(headline_beats),
+                "mode": "explicit",
+                "applied": False,
+                "dropped": True,
+                "reason": ("survey-viz peer does not support "
+                           "headline_beats (needs >= 0.28.0); dropped"),
+            }
+    elif headline_beats == "auto":
+        headline_beats_record = {
+            "requested": "auto",
+            "mode": "auto",
+            "status": "pending",
+            "applied": False,
+            "dropped": False,
+        }
 
     # Platform canvas (survey-layout + survey-viz >= 0.18.0): only when
     # a non-legacy platform is requested, so older peers keep working
@@ -3149,6 +3289,61 @@ def run_pipeline(
     except Exception as exc:  # never fail a render for a caption
         story = {"status": "unavailable",
                  "reason": f"{type(exc).__name__}: {exc}"}
+    # -- headline beats auto drafting (survey-narrate peer, optional) --------
+    # headline_beats="auto" drafts beats from the fetched field via
+    # narrate.story_facts + narrate.headline_beats. The story facts
+    # computed just above are reused when available; otherwise facts
+    # are computed here. Any failure (peer missing, facts malformed)
+    # falls back to no beats and records the fallback honestly — never
+    # fabricates beats.
+    if headline_beats == "auto":
+        try:
+            import narrate as _narrate_auto
+            if story.get("status") == "ok" and "facts" in story:
+                _auto_facts = story["facts"]
+            else:
+                _auto_facts = _narrate_auto.story_facts(
+                    field,
+                    region_name=(region_name if region_name
+                                 else str(getattr(spec, "region_key", ""))))
+            _auto_beats = _narrate_auto.headline_beats(_auto_facts)
+            headline_beats_resolved = _auto_beats
+            if _supports_kw(peers.render_viz, "headline_beats"):
+                render_viz_kwargs["headline_beats"] = _auto_beats
+                headline_beats_record = {
+                    "requested": "auto",
+                    "mode": "auto",
+                    "status": "ok",
+                    "beats": _json_safe(_auto_beats),
+                    "applied": True,
+                    "dropped": False,
+                    "fallback": False,
+                }
+            else:
+                headline_beats_record = {
+                    "requested": "auto",
+                    "mode": "auto",
+                    "status": "dropped",
+                    "beats": _json_safe(_auto_beats),
+                    "applied": False,
+                    "dropped": True,
+                    "reason": ("survey-viz peer does not support "
+                               "headline_beats (needs >= 0.28.0); dropped"),
+                    "fallback": False,
+                }
+        except Exception as exc:
+            headline_beats_resolved = None
+            render_viz_kwargs.pop("headline_beats", None)
+            headline_beats_record = {
+                "requested": "auto",
+                "mode": "auto",
+                "status": "fallback",
+                "fallback": True,
+                "reason": f"{type(exc).__name__}: {exc}",
+                "beats": None,
+                "applied": False,
+                "dropped": False,
+            }
     # -- derived products (survey-derive peer, optional) ----------------------
     # A climatological anomaly product replaces the raw field with
     # field-minus-climatology (or the standardized / percent-of-normal
@@ -3461,6 +3656,15 @@ def run_pipeline(
     # when autopilot=False).
     if autopilot:
         provenance["autopilot"] = autopilot_record
+    # Surface / counter / headline beats: only recorded when requested
+    # (or when the surface preset is active), so defaults-off runs keep
+    # the pre-0.21.0 provenance shape exactly.
+    if surface_record:
+        provenance["render"]["surface"] = surface_record
+    if counter_record:
+        provenance["render"]["counter"] = counter_record
+    if headline_beats_record:
+        provenance["render"]["headline_beats"] = headline_beats_record
 
     return RunResult(
         video_path=os.path.abspath(video_path),

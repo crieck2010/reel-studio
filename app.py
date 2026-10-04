@@ -41,7 +41,7 @@ except ImportError:  # headless / tests: import still works, main() won't run
 from studio import batch, caching, llm_assist, peers, pipeline, scheduler, styling, timescale
 
 APP_TITLE = "reel-studio"
-APP_VERSION = "0.17.0"
+APP_VERSION = "0.21.0"
 PEER_REPOS = ("survey-viz", "survey-currents", "survey-animate",
               "survey-layout", "survey-style", "survey-schedule",
               "survey-publish")
@@ -60,6 +60,10 @@ MIN_VIZ_LABELS = (0, 23, 0)     # render_viz place_labels=/max_labels=
 #: Minimum peer version for the v0.17.0 basemap styles + strand controls.
 MIN_VIZ_STRANDS = (0, 24, 0)    # render_viz basemap=/strand_count=/
                                 # strand_linewidth= + dark_strands preset
+
+#: Minimum peer version for the v0.21.0 surface preset.
+MIN_VIZ_SURFACE = (0, 28, 0)    # render_viz preset="surface" +
+                                # surface_*/counter/headline_beats
 
 #: Camera-motion widget options (values are the MotionSpec vocabularies).
 ZOOM_MODES = ("off", "in", "out")
@@ -125,6 +129,71 @@ def _peer_version_tuple(status: peers.PeerStatus) -> tuple:
 
 def _version_ok(status: peers.PeerStatus, minimum: tuple) -> bool:
     return status.installed and _peer_version_tuple(status) >= minimum
+
+
+def parse_headline_beats_text(text: Optional[str]) -> Optional[List[tuple]]:
+    """Parse the headline-beats text field into ``[(fraction, text), ...]``.
+
+    One beat per line, format ``fraction|text`` (e.g.
+    ``0.0|Opening headline``). Blank lines are ignored; an empty field
+    returns ``None`` (no beats). Malformed lines raise ``ValueError``
+    naming the line — the UI surfaces it instead of crashing the run.
+    Fractions must be in [0.0, 1.0]. Headless-safe.
+    """
+    if text is None:
+        return None
+    if not str(text).strip():
+        return None
+    beats: List[tuple] = []
+    for i, raw_line in enumerate(str(text).splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if "|" not in line:
+            raise ValueError(
+                f"headline beat line {i}: missing '|' separator — "
+                f"expected 'fraction|text', got {raw_line!r}")
+        frac_str, beat_text = line.split("|", 1)
+        frac_str = frac_str.strip()
+        beat_text = beat_text.strip()
+        if not beat_text:
+            raise ValueError(
+                f"headline beat line {i}: empty text after '|'")
+        try:
+            frac = float(frac_str)
+        except ValueError:
+            raise ValueError(
+                f"headline beat line {i}: fraction {frac_str!r} "
+                "is not a number") from None
+        if not (0.0 <= frac <= 1.0):
+            raise ValueError(
+                f"headline beat line {i}: fraction {frac} out of "
+                "range [0.0, 1.0]")
+        beats.append((frac, beat_text))
+    return beats if beats else None
+
+
+def parse_contour_levels_text(text: Optional[str]) -> Optional[List[float]]:
+    """Parse comma-separated contour levels; empty = ``None`` (auto).
+
+    ``"1, 2.5, 4"`` → ``[1.0, 2.5, 4.0]``. Malformed entries raise
+    ``ValueError``. Headless-safe.
+    """
+    if text is None:
+        return None
+    if not str(text).strip():
+        return None
+    levels: List[float] = []
+    for part in str(text).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            levels.append(float(part))
+        except ValueError:
+            raise ValueError(
+                f"contour level {part!r} is not a number") from None
+    return levels if levels else None
 
 
 def _current_run_settings() -> Dict[str, Any]:
@@ -564,6 +633,17 @@ def _aesthetic_preset_section(status, spec_dict: Dict[str, Any], rev: int) -> No
         st.session_state["aes_strand_linewidth"] = None
         st.session_state["aes_landmask"] = None
         st.session_state["aes_bivariate"] = None
+        st.session_state["aes_surface_contours"] = True
+        st.session_state["aes_surface_shadow"] = True
+        st.session_state["aes_surface_smoothing"] = 0.0
+        st.session_state["aes_surface_scale"] = "linear"
+        st.session_state["aes_surface_contour_levels_text"] = ""
+        st.session_state["aes_counter_enabled"] = False
+        st.session_state["aes_counter_stat"] = "sum"
+        st.session_state["aes_counter_unit"] = ""
+        st.session_state["aes_counter_label"] = ""
+        st.session_state["aes_headline_beats_text"] = ""
+        st.session_state["aes_headline_beats_auto"] = False
         return
 
     presets = list(getattr(viz, "AESTHETIC_PRESETS",
@@ -576,6 +656,7 @@ def _aesthetic_preset_section(status, spec_dict: Dict[str, Any], rev: int) -> No
         "dark_glow": "Dark glow — event glow with bloom on black",
         "paper_prism": "Paper prism — 3D extrusion on warm paper",
         "dark_strands": "Dark strands — advected particle trails on black",
+        "surface": "Surface — colored scalar surface over shadowed land",
     }
     options = [None] + presets
     current = st.session_state.get("aesthetic_preset")
@@ -678,7 +759,186 @@ def _aesthetic_preset_section(status, spec_dict: Dict[str, Any], rev: int) -> No
 
     _place_labels_section(status, spec_dict, rev)
     _basemap_strands_section(status, rev)
+    _surface_section(status, rev)
+    _counter_headline_section(status, rev)
     _autopilot_section(rev)
+
+
+def _surface_section(status, rev: int) -> None:
+    """Surface preset controls — inside the Aesthetics step's preset section.
+
+    Shown/enabled only when the ``surface`` preset is picked. Needs
+    survey-viz >= 0.28.0; older peers get the upgrade hint and the
+    controls stay inert (session defaults, nothing passed). Defaults
+    are the peer defaults (contours/shadow on, no smoothing, linear
+    scale, auto levels) — at defaults nothing extra is forwarded, so
+    older peers keep working untouched.
+    """
+    st.markdown("**Surface**")
+    if not _version_ok(status, MIN_VIZ_SURFACE):
+        st.info(_upgrade_hint(status, "0.28.0",
+                              "Surface preset controls") +
+                " The reel renders with the legacy look in the meantime.")
+        st.session_state["aes_surface_contours"] = True
+        st.session_state["aes_surface_shadow"] = True
+        st.session_state["aes_surface_smoothing"] = 0.0
+        st.session_state["aes_surface_scale"] = "linear"
+        st.session_state["aes_surface_contour_levels_text"] = ""
+        return
+
+    if st.session_state.get("aesthetic_preset") != "surface":
+        st.caption("Surface controls apply to the Surface preset — "
+                   "pick it above to use them.")
+        # Keep defaults so the Run step passes peer defaults.
+        if "aes_surface_contours" not in st.session_state:
+            st.session_state["aes_surface_contours"] = True
+        if "aes_surface_shadow" not in st.session_state:
+            st.session_state["aes_surface_shadow"] = True
+        if "aes_surface_smoothing" not in st.session_state:
+            st.session_state["aes_surface_smoothing"] = 0.0
+        if "aes_surface_scale" not in st.session_state:
+            st.session_state["aes_surface_scale"] = "linear"
+        if "aes_surface_contour_levels_text" not in st.session_state:
+            st.session_state["aes_surface_contour_levels_text"] = ""
+        return
+
+    contours = st.checkbox(
+        "Surface contours",
+        value=bool(st.session_state.get("aes_surface_contours", True)),
+        key=f"aes_surface_contours_{rev}",
+        help="Draw contour lines on the surface.",
+    )
+    st.session_state["aes_surface_contours"] = bool(contours)
+
+    shadow = st.checkbox(
+        "Surface shadow",
+        value=bool(st.session_state.get("aes_surface_shadow", True)),
+        key=f"aes_surface_shadow_{rev}",
+        help="Draw the shadowed land/footprint silhouette under the surface.",
+    )
+    st.session_state["aes_surface_shadow"] = bool(shadow)
+
+    smoothing = st.slider(
+        "Surface smoothing",
+        0.0, 5.0,
+        float(st.session_state.get("aes_surface_smoothing") or 0.0),
+        step=0.1,
+        key=f"aes_surface_smoothing_{rev}",
+        help="Gaussian smoothing sigma in output pixels. 0 = off.",
+    )
+    st.session_state["aes_surface_smoothing"] = float(smoothing)
+
+    scale = st.selectbox(
+        "Surface scale",
+        options=["linear", "log"],
+        index=["linear", "log"].index(
+            st.session_state.get("aes_surface_scale") or "linear"),
+        key=f"aes_surface_scale_{rev}",
+        help="Linear for most data; log for density-like data "
+             "(log-spaced colorbar ticks).",
+    )
+    st.session_state["aes_surface_scale"] = scale
+
+    levels_text = st.text_input(
+        "Contour levels (comma-separated, empty = auto)",
+        value=st.session_state.get("aes_surface_contour_levels_text") or "",
+        key=f"aes_surface_levels_{rev}",
+        help="Explicit contour levels, e.g. 0, 5, 10, 15. "
+             "Empty uses auto data-driven levels.",
+    )
+    st.session_state["aes_surface_contour_levels_text"] = levels_text
+
+
+def _counter_headline_section(status, rev: int) -> None:
+    """Counter + headline beats — inside the Aesthetics step.
+
+    Counter (surface preset only): toggle off by default, stat picker,
+    unit/label fields. Headline beats: multiline ``fraction|text``
+    field plus an auto-draft checkbox (survey-narrate drafts — human
+    approves/edits before use). Needs survey-viz >= 0.28.0 for the
+    render kwargs; older peers keep the controls inert.
+    """
+    st.markdown("**Counter & headline beats**")
+    if not _version_ok(status, MIN_VIZ_SURFACE):
+        st.info(_upgrade_hint(status, "0.28.0",
+                              "Counter and headline beats") +
+                " The reel renders without them in the meantime.")
+        st.session_state["aes_counter_enabled"] = False
+        st.session_state["aes_counter_stat"] = "sum"
+        st.session_state["aes_counter_unit"] = ""
+        st.session_state["aes_counter_label"] = ""
+        st.session_state["aes_headline_beats_text"] = ""
+        st.session_state["aes_headline_beats_auto"] = False
+        return
+
+    # --- Counter ---
+    counter_on = st.checkbox(
+        "Counter",
+        value=bool(st.session_state.get("aes_counter_enabled", False)),
+        key=f"aes_counter_on_{rev}",
+        help="Animated big date readout + running stat under the map "
+             "(surface preset only). Off by default.",
+    )
+    st.session_state["aes_counter_enabled"] = bool(counter_on)
+    if counter_on:
+        stat = st.selectbox(
+            "Counter stat",
+            options=["sum", "mean", "max"],
+            index=["sum", "mean", "max"].index(
+                st.session_state.get("aes_counter_stat") or "sum"),
+            key=f"aes_counter_stat_{rev}",
+            help="Per-timestep NaN-aware stat shown by the counter.",
+        )
+        st.session_state["aes_counter_stat"] = stat
+        unit = st.text_input(
+            "Counter unit",
+            value=st.session_state.get("aes_counter_unit") or "",
+            key=f"aes_counter_unit_{rev}",
+            help="Unit shown next to the counter value, e.g. km².",
+        )
+        st.session_state["aes_counter_unit"] = unit
+        label = st.text_input(
+            "Counter label",
+            value=st.session_state.get("aes_counter_label") or "",
+            key=f"aes_counter_label_{rev}",
+            help="Label shown with the counter, e.g. Total area.",
+        )
+        st.session_state["aes_counter_label"] = label
+    else:
+        # Keep picker values for when re-enabled; Run passes None.
+        if "aes_counter_stat" not in st.session_state:
+            st.session_state["aes_counter_stat"] = "sum"
+        if "aes_counter_unit" not in st.session_state:
+            st.session_state["aes_counter_unit"] = ""
+        if "aes_counter_label" not in st.session_state:
+            st.session_state["aes_counter_label"] = ""
+
+    # --- Headline beats ---
+    beats_text = st.text_area(
+        "Headline beats (one per line, fraction|text)",
+        value=st.session_state.get("aes_headline_beats_text") or "",
+        height=90,
+        key=f"aes_beats_text_{rev}",
+        help="Title swaps at each beat, e.g.\n"
+             "0.0|Opening headline\n"
+             "0.6|The north pulls ahead\n"
+             "Leave empty for no beats.",
+    )
+    st.session_state["aes_headline_beats_text"] = beats_text
+
+    auto_beats = st.checkbox(
+        "Auto-draft headline beats",
+        value=bool(st.session_state.get("aes_headline_beats_auto", False)),
+        key=f"aes_beats_auto_{rev}",
+        help="Draft beats from the data with survey-narrate. "
+             "When checked, the text field above is ignored and "
+             "headline_beats=\"auto\" is sent.",
+    )
+    st.session_state["aes_headline_beats_auto"] = bool(auto_beats)
+    st.caption(
+        "Auto beats are drafts from survey-narrate for review/editing — "
+        "a human approves/edits them before use. They restate computed "
+        "facts only (peak, mean, direction, temperature range).")
 
 
 def _autopilot_section(rev: int) -> None:
@@ -1743,6 +2003,39 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
         progress_bar.progress(min(max(frac, 0.0), 1.0), text=message)
         status_box.update(label=message, state="running")
 
+    # Surface / counter / headline beats from the Aesthetics step.
+    # Parsers raise ValueError on malformed input — warn and fall back
+    # to None (never crash the run, never fabricate).
+    surface_contours = bool(
+        st.session_state.get("aes_surface_contours", True))
+    surface_shadow = bool(st.session_state.get("aes_surface_shadow", True))
+    surface_smoothing = float(
+        st.session_state.get("aes_surface_smoothing") or 0.0)
+    surface_scale = st.session_state.get("aes_surface_scale") or "linear"
+    try:
+        surface_levels = parse_contour_levels_text(
+            st.session_state.get("aes_surface_contour_levels_text") or "")
+    except ValueError as exc:
+        st.warning(f"Contour levels ignored: {exc}")
+        surface_levels = None
+    counter_arg: Optional[Dict[str, Any]] = None
+    if st.session_state.get("aes_counter_enabled"):
+        counter_arg = {
+            "stat": st.session_state.get("aes_counter_stat") or "sum",
+            "unit": st.session_state.get("aes_counter_unit") or "",
+            "label": st.session_state.get("aes_counter_label") or "",
+        }
+    headline_beats_arg: Any = None
+    if st.session_state.get("aes_headline_beats_auto"):
+        headline_beats_arg = "auto"
+    else:
+        try:
+            headline_beats_arg = parse_headline_beats_text(
+                st.session_state.get("aes_headline_beats_text") or "")
+        except ValueError as exc:
+            st.warning(f"Headline beats ignored: {exc}")
+            headline_beats_arg = None
+
     try:
         result = pipeline.run_pipeline(
             spec, wired, out_dir, progress=on_progress,
@@ -1767,6 +2060,13 @@ def _run_step(statuses: Dict[str, peers.PeerStatus]) -> None:
             strand_linewidth=st.session_state.get("aes_strand_linewidth"),
             landmask=st.session_state.get("aes_landmask"),
             bivariate=st.session_state.get("aes_bivariate"),
+            surface_contours=surface_contours,
+            surface_contour_levels=surface_levels,
+            surface_shadow=surface_shadow,
+            surface_smoothing=surface_smoothing,
+            surface_scale=surface_scale,
+            counter=counter_arg,
+            headline_beats=headline_beats_arg,
             autopilot=bool(st.session_state.get("autopilot", False)),
             derived=_run_derived())
     except (pipeline.UnfetchableRegionError,
