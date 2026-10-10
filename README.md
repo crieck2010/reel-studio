@@ -1,3 +1,7 @@
+> [!IMPORTANT]
+> **Consolidated into [EarthWatch-Suite](https://github.com/crieck2010/earthwatch-suite)**  
+> This engine has been consolidated into the unified [EarthWatch-Suite monorepo](https://github.com/crieck2010/earthwatch-suite). Active development, bug fixes, releases, and unified testing now live in earthwatch-suite. This repository is preserved as an archive.
+
 # reel-studio
 
 **Plain-English description → finished vertical reel (MP4).** 100% local.
