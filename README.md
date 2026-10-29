@@ -6,6 +6,8 @@
 
 **Plain-English description → finished vertical reel (MP4).** 100% local.
 
+![Earthquake reel output — Japan](docs/assets/reel-studio-quakes-japan.gif)
+
 Type something like *"surface water temperature on Lake Superior for the past 10 years"*,
 confirm the parsed spec, press **Run** — reel-studio picks the best data source from
 **13 supported satellite/model/in-situ datasets**, fetches it, renders vertical map
